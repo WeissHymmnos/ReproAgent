@@ -1,0 +1,67 @@
+[project]
+name = "reproagent"
+version = "0.1.0"
+description = "研报因子自动复现系统 — PDF 卖方研报 → 因子提取 → 回测复现 → 偏差自愈 → 因子库"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+    "sqlmodel>=0.0.16",
+    "pyyaml>=6.0",
+    "loguru>=0.7",
+    "jinja2>=3.1",
+    "polars>=1.0",
+    "typer>=0.12",
+    "rich>=13.0",
+    "textual>=0.50",
+    "pypdf>=4.0",
+    "openai>=1.40",
+    "anthropic>=0.30",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+parser-marker = ["marker-pdf>=1.0"]
+parser-llama = ["llama-parse>=0.4"]
+parser-mineru = ["magic-pdf>=0.8"]
+rqalpha = ["rqalpha>=6.1"]
+pdf-vision = ["pdf2image>=1.17"]
+instructor = ["instructor>=1.0"]
+
+[project.scripts]
+reproagent = "reproagent.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/reproagent"]
+
+# src 布局：将 src/reproagent 作为包 reproagent 安装
+[tool.hatch.build.targets.wheel.force-include]
+"src/reproagent" = "reproagent"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+packages = ["reproagent"]
