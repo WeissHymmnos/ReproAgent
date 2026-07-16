@@ -20,7 +20,25 @@ class StyleClassifier:
 
     def classify(self, factor: FactorDefinition) -> str:
         """返回 style 字符串（与 FactorDefinition.style 对齐）。"""
-        raise NotImplementedError("StyleClassifier.classify")
+        text = (factor.name + " " + factor.name_cn + " " + factor.formula).lower()
+        for style, keywords in self.RULES.items():
+            for kw in keywords:
+                if kw.lower() in text:
+                    return style
+        matched = self._llm_classify(factor)
+        if matched != "other":
+            return matched
+        return "other"
 
     def _llm_classify(self, factor: FactorDefinition) -> str:
-        raise NotImplementedError("StyleClassifier._llm_classify")
+        """无 API key 时退化为规则扩展匹配（mock）。"""
+        text = (factor.name + " " + factor.name_cn + " " + factor.formula).lower()
+        extended = {
+            "technical": ["ma", "macd", "rsi", "boll", "kdj", "技术", "technical"],
+            "macro": ["gdp", "cpi", "pmi", "宏观", "macro"],
+        }
+        for style, keywords in extended.items():
+            for kw in keywords:
+                if kw.lower() in text:
+                    return style
+        return "other"

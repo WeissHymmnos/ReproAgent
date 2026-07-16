@@ -782,7 +782,7 @@ print('llm extractor loaded', LLMExtractor)
 
   **Commit**: YES — `feat(parser): llm extractor with mock fallback`
 
-- [ ] 13. schema_validator + config_builder
+- [x] 13. schema_validator + config_builder
 
   **What to do**:
   - SchemaValidator: [OK]/[WARN] 数据字典映射
@@ -813,7 +813,7 @@ print('modules', ConfigBuilder, SchemaValidator)
 
   **Commit**: YES — `feat(parser): validate specs and build replication config`
 
-- [ ] 14. ReportParser 编排
+- [x] 14. ReportParser 编排
 
   **What to do**:
   - `ReportParser.parse`: layout → llm → validate → config
@@ -984,7 +984,7 @@ print('metrics', metrics)
 
   **Commit**: YES — `feat(reproducer): metrics and group backtester`
 
-- [ ] 18. evaluator_factory + RiceQuantEval 薄封装
+- [x] 18. evaluator_factory + RiceQuantEval 薄封装
 
   **What to do**:
   - 完善 `evaluator_factory.build_evaluator`：按 Settings/data_source 分发 polars / ricequant / qlib / local 评估器
@@ -1016,7 +1016,7 @@ print(build_evaluator)
 
   **Commit**: YES — `feat(reproducer): evaluator factory and thin RQ eval`
 
-- [ ] 19. FactorReproducer 编排
+- [x] 19. FactorReproducer 编排
 
   **What to do**:
   - `reproduce` / `compute_factor` / `_build_factor_def`
@@ -1043,7 +1043,7 @@ print(build_evaluator)
 
   **Commit**: YES — `feat(reproducer): FactorReproducer orchestration`
 
-- [ ] 20. DeviationAnalyzer + root_cause
+- [x] 20. DeviationAnalyzer + root_cause
 
   **What to do**:
   - `analyze` 对比 BacktestResult vs ReportedMetrics + ToleranceConfig
@@ -1072,7 +1072,7 @@ print(build_evaluator)
 
   **Commit**: YES — `feat(deviation): analyzer and root cause`
 
-- [ ] 21. library manager + classifier + index/wiki writers
+- [x] 21. library manager + classifier + index/wiki writers
 
   **What to do**:
   - FactorLibraryManager register/get/list/dedup_check/update_index/update_wiki
@@ -1101,7 +1101,7 @@ print(build_evaluator)
 
   **Commit**: YES — `feat(library): manager classifier index wiki`
 
-- [ ] 22. HTML 因子库仪表盘（from zip）
+- [x] 22. HTML 因子库仪表盘（from zip）
 
   **What to do**:
   - 新增 `library/dashboard.py`：`generate_html_dashboard(factors, output_path) → Path`
@@ -1220,7 +1220,7 @@ except Exception as e:
 
   **Commit**: YES — `feat(pipeline): end-to-end reproduce_report`
 
-- [ ] 25. logging_setup 完善
+- [x] 25. logging_setup 完善
 
   **What to do**:
   - 若仍为桩/空：配置 loguru 控制台 + `data_dir/logs` 轮转

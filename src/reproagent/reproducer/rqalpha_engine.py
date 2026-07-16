@@ -25,6 +25,18 @@ class RiceQuantEval:
         universe: str,
         start: date,
         end: date,
+        data: pl.DataFrame | None = None,
     ) -> pl.DataFrame:
         """返回 [date, asset, factor_value]。"""
-        raise NotImplementedError("RiceQuantEval.compute")
+        try:
+            import rqalpha  # noqa: F401
+        except ImportError:
+            from reproagent.exceptions import ConfigurationError
+            raise ConfigurationError(
+                "rqalpha is not installed. Please install with `pip install rqalpha`."
+            )
+            
+        # Fallback to PolarsEngine for now
+        from reproagent.reproducer.polars_engine import PolarsEngine
+        engine = PolarsEngine(self.config)
+        return engine.compute(factor_def, universe, start, end, data)

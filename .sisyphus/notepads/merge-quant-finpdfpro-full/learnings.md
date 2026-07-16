@@ -61,3 +61,30 @@
 - `enqueue_manual_review` calls `repo.save_report(report)` before `enqueue_review` — upsert semantics handle both fresh and already-persisted reports (Repository.save_report checks existing row).
 - `confirm_manual_review` maps `approve`→`approved` / `reject`→`rejected` (Repository stores status as free string; table comment says "pending / approved / rejected").
 - `dequeue_review` in Repository does NOT mutate status (peek-only) — confirmed by test: after approve, `dequeue_manual_review` returns None because `update_review_status` moved it out of `pending`. Good: dequeue is non-destructive, confirm is destructive.
+- Implemented schema_validator.py to validate factor specs and append warnings for low extraction confidence.
+- Implemented config_builder.py to assemble ReplicationConfig and export it as config.yaml.
+- Implemented report_parser.py to orchestrate LayoutExtractor, LLMExtractor, SchemaValidator, and ConfigBuilder.
+
+## Tasks 20-22 (deviation + library + dashboard)
+
+### Task 20: DeviationAnalyzer + root_cause
+- BacktestResult fields: ic_mean, ic_ir, long_short_annual_return, sharpe_ratio, max_drawdown
+- ReportedMetrics fields: ic_mean, ic_ir, long_short_return, sharpe_ratio, max_drawdown (all Optional, None = skip)
+- ToleranceConfig: ic_mean_abs, ic_ir_abs, long_short_return_rel, sharpe_abs, max_drawdown_abs
+- DeviationReport.metric_deviations keys: ic_mean, ic_ir, long_short_annual_return, sharpe_ratio, max_drawdown
+- should_reflect: False if passed, False if status != in_progress, True if current_iteration < max_iterations
+- root_cause classify: heuristic on metric_deviations deltas (signs, magnitudes)
+
+### Task 21: Library manager
+- Repository has save_library_entry, get_library_entry, list_library_entries, get_by_dedup_hash
+- SQLModel metadata.create_all(engine) to init tables (no init_db helper)
+- FactorLibraryTable has FK report_id -> reports.id, so must save_report first
+- register flow: compute_dedup_hash -> dedup_check -> bump patch if exists (reuse id) -> classify -> save -> update_index/wiki
+- StyleClassifier: rule keywords lowercased match against name+name_cn+formula
+- IndexWriter writes wiki/INDEX.md; WikiWriter writes wiki/factors/<name>.md
+
+### Task 22: HTML dashboard
+- Ported Chart.js dark HTML from legacy_quant/factor_library_dashboard.py
+- generate_html_dashboard(factors: list[dict], output_path) -> Path (no SQLite dep)
+- Added per-file-ignores E501 in pyproject.toml for dashboard.py (HTML template lines)
+- Export from library/__init__.py

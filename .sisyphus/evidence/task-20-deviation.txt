@@ -1,0 +1,28 @@
+Task 20: DeviationAnalyzer + root_cause
+
+Files implemented:
+- src/reproagent/deviation/analyzer.py
+  - analyze(reproduced, reported, tolerances) -> DeviationReport
+    Compares ic_mean, ic_ir, long_short_annual_return, sharpe_ratio, max_drawdown
+    None reported metrics skip that metric (no delta, no pass/fail flag)
+    passed = all non-None metrics within tolerance
+    recommend_reflect = not passed
+  - classify_root_cause(deviation, config) -> RootCause (delegates)
+  - should_reflect(deviation, state) -> bool
+    False if passed; False if status != in_progress; True if current_iteration < max_iterations
+- src/reproagent/deviation/root_cause.py
+  - classify_root_cause(deviation, config) -> RootCause
+    Heuristic rules: LOOKAHEAD_BIAS, DATA_MISMATCH, PARAMETER_ERROR, FORMULA_ERROR, UNIVERSE_MISMATCH, UNKNOWN
+
+QA verification:
+- PASS case (all metrics match tolerances): passed=True, recommend_reflect=False
+- FAIL case (ic_mean delta=0.04 > 0.03 tol): passed=False, recommend_reflect=True, root_cause=formula_error
+- should_reflect: True at iteration 0; False at iteration 3 (exhausted); False when passed
+- lsp_diagnostics: clean (no errors/warnings)
+
+Tolerance mapping:
+- ic_mean: abs delta <= ic_mean_abs (0.03)
+- ic_ir: abs delta <= ic_ir_abs (0.2)
+- long_short_return: rel delta <= long_short_return_rel (0.15) if reported != 0 else abs <= 5.0
+- sharpe_ratio: abs delta <= sharpe_abs (0.3)
+- max_drawdown: abs delta <= max_drawdown_abs (0.05)

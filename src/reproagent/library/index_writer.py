@@ -12,4 +12,23 @@ class IndexWriter:
 
     def update(self, entries: list[FactorLibraryEntry] | None = None) -> None:
         """重生成 wiki/INDEX.md 表格（按 created_at 倒序）。"""
-        raise NotImplementedError("IndexWriter.update")
+        if entries is None:
+            return
+        self.paths.wiki_dir.mkdir(parents=True, exist_ok=True)
+        sorted_entries = sorted(entries, key=lambda e: e.created_at, reverse=True)
+        lines = [
+            "# 因子库索引",
+            "",
+            f"共 {len(sorted_entries)} 个因子。",
+            "",
+            "| 因子 | 风格 | 版本 | 状态 | 去重哈希 | 创建时间 |",
+            "|------|------|------|------|----------|----------|",
+        ]
+        for e in sorted_entries:
+            lines.append(
+                f"| [{e.factor.name_cn}](factors/{e.factor.name}.md) "
+                f"| {e.factor.style} | {e.version} | {e.status} "
+                f"| {e.dedup_hash[:8]} | {e.created_at:%Y-%m-%d %H:%M} |"
+            )
+        lines.append("")
+        self.paths.wiki_index.write_text("\n".join(lines), encoding="utf-8")

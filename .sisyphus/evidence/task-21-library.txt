@@ -1,0 +1,26 @@
+Task 21: library manager + classifier + index/wiki writers
+
+Files implemented:
+- src/reproagent/library/manager.py
+  - FactorLibraryManager(repository, paths)
+  - register(entry): compute dedup_hash, dedup_check -> bump patch version if exists, classify style, save, update_index, update_wiki
+  - get(factor_id), list(filter), dedup_check(entry), update_index(), update_wiki()
+- src/reproagent/library/classifier.py
+  - StyleClassifier.classify(factor): rule keywords (动量->momentum, 估值->value, etc) else _llm_classify
+  - _llm_classify: offline mock extended rules (technical/macro) else "other"
+- src/reproagent/library/index_writer.py
+  - IndexWriter.update(entries): writes wiki/INDEX.md table sorted by created_at desc
+- src/reproagent/library/wiki_writer.py
+  - WikiWriter.update(entries) / write_entry(entry): writes wiki/factors/<name>.md per factor
+
+QA verification (full roundtrip with SQLModel sqlite):
+- register entry with style='other' formula='rank(close)' name_cn='动量因子20日' -> classified as 'momentum'
+- get('e1') returns entry
+- list() returns 1 entry
+- register duplicate (same formula+inputs) -> version bumped 0.1.0 -> 0.1.1, id stays e1, list still 1
+- INDEX.md generated with '因子库索引' header
+- wiki/factors/momentum_20.md generated with factor name
+- StyleClassifier.classify -> 'momentum' for 动量 keyword
+- lsp_diagnostics: clean on all 4 files
+
+Dedup strategy: same dedup_hash -> bump patch version, reuse existing id (update in place)

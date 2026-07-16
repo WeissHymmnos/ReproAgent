@@ -17,14 +17,17 @@ class ReportParser:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.layout_extractor = LayoutExtractor(backend=settings.parser_backend)
+        self.layout_extractor = LayoutExtractor(backend=settings.parser_backend, settings=settings)
         self.llm_extractor = LLMExtractor(settings)
         self.schema_validator = SchemaValidator()
         self.config_builder = ConfigBuilder(settings)
 
     def parse(self, report: ResearchReport) -> list[ParsedFactorSpec]:
         """布局提取 → LLM 结构化提取 → schema 校验。"""
-        raise NotImplementedError("ReportParser.parse")
+        md = self.layout_extractor.extract(report)
+        specs = self.llm_extractor.extract(report, md)
+        specs = self.schema_validator.validate_all(specs)
+        return specs
 
     def build_config(
         self,
