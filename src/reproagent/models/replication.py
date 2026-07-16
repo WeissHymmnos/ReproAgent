@@ -29,7 +29,7 @@ class ReplicationConfig(BaseModel):
     report_id: str  # FK → ResearchReport.id
     factor_specs: list[ParsedFactorSpec]
     engine: Literal["polars", "rqalpha"] = "polars"
-    data_source: Literal["ricequant", "tushare", "local"] = "ricequant"
+    data_source: Literal["ricequant", "qlib", "local", "tushare"] = "local"
     backtest_params: BacktestParams
     parser_version: str  # 如 "marker-1.0.0"
     extraction_model_id: str  # 如 "claude-sonnet-4-5"

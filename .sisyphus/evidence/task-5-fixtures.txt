@@ -1,0 +1,11 @@
+Fixture Generation Evidence:
+- PDF Path: tests/fixtures/sample_reports/minimal.pdf
+  Size: 1861 bytes
+  Pages: 2
+  Content: Contains Chinese and English text.
+
+- Parquet Path: tests/fixtures/test_data/prices.parquet
+  Row Count: 60
+  Columns: ['datetime', 'trade_date', 'instrument', 'ts_code', 'open', 'high', 'low', 'close', 'volume', 'amount']
+  Instruments: ['000001.SZ', '600000.SH']
+  Trading Days: 30

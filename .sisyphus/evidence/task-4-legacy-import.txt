@@ -1,0 +1,1 @@
+<class 'reproagent.legacy_quant.factor_db.FactorDB'>

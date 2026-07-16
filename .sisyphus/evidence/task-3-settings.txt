@@ -1,0 +1,7 @@
+Verification of Settings fields:
+Command: uv run python -c "from reproagent.settings import Settings; s=Settings(); print(s.parser_backend, s.finpdfpro_mode, s.data_source, s.local_data_path)"
+Output: finpdfpro balanced local None
+
+Verification of environment variable mapping:
+Command: RQ_USER=test_user RQ_PASS=test_pass RQ_TOKEN=test_token uv run python -c "from reproagent.settings import Settings; s=Settings(); print(s.rq_user.get_secret_value(), s.rq_pass.get_secret_value(), s.ricequant_token.get_secret_value())"
+Output: test_user test_pass test_token

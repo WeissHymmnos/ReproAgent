@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,13 +28,28 @@ class Settings(BaseSettings):
     llm_seed: int = 42
 
     # Parser
-    parser_backend: Literal["marker", "llamaparse", "mineru"] = "marker"
+    parser_backend: Literal["finpdfpro", "marker", "llamaparse", "mineru"] = "finpdfpro"
     parser_version: str = "1.0.0"
+    finpdfpro_mode: Literal["fast", "balanced", "max-quality"] = "balanced"
+    finpdfpro_vlm_backend: Literal["none", "paddle_vl", "smolvlm", "llamacpp_http"] = "none"
 
     # Data
-    data_source: Literal["ricequant", "tushare", "local"] = "ricequant"
-    ricequant_token: SecretStr | None = None
+    data_source: Literal["ricequant", "qlib", "local", "tushare"] = "local"
+    ricequant_token: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ricequant_token", "rq_token", "RICEQUANT_TOKEN", "RQ_TOKEN"),
+    )
+    rq_user: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("rq_user", "RQ_USER"),
+    )
+    rq_pass: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("rq_pass", "RQ_PASS"),
+    )
     tushare_token: SecretStr | None = None
+    qlib_data_path: Path | None = None
+    local_data_path: Path | None = None
 
     # 存储
     data_dir: Path = Field(default_factory=lambda: Path("~/.reproagent").expanduser())
