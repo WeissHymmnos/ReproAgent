@@ -628,7 +628,7 @@ print('plotting module loaded')
 
   **Commit**: YES — `feat(utils): matplotlib chart helpers`
 
-- [ ] 10. 实现 ingestion（uploader / validator / review_queue）
+- [x] 10. 实现 ingestion（uploader / validator / review_queue）
 
   **What to do**:
   - `upload_pdf` → ResearchReport（hash via hashing.sha256_file）

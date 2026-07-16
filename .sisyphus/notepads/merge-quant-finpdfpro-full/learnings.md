@@ -53,3 +53,11 @@
 - Implemented `get_cached_backtest` to support both single `backtest.json` matching the requested `factor_id` and keyed `backtest_{factor_id}.json` files.
 - Ensured directories are created automatically on `save`.
 - Verified the implementation with a comprehensive roundtrip test script and ensured `lsp_diagnostics` is completely clean.
+
+## Task 10 — ingestion (uploader / validator / review_queue)
+- `upload_pdf` resolves path, raises `FileNotFoundError` (not exists) / `ValidationError` (not a file) — matches `utils/pdf.py` precedent. Uses `datetime.now(UTC)` (not deprecated `utcnow()`).
+- `validate_pdf` returns a NEW report via `model_copy(update=...)` (Pydantic v2 immutable update) — never mutates the input. Per masterplan §子系统1: page_count > 200 → warning appended to `validation_errors` but status stays `valid` ("告警不阻断"). Implemented `_only_warning` helper to distinguish pure-warning case from hard errors.
+- `review_queue` accepts optional `Repository` injection; falls back to `_default_repo()` which builds engine from `get_settings().db_path` + `init_db`. This makes functions usable both standalone (CLI default DB) and testable with injected in-memory/temp engine.
+- `enqueue_manual_review` calls `repo.save_report(report)` before `enqueue_review` — upsert semantics handle both fresh and already-persisted reports (Repository.save_report checks existing row).
+- `confirm_manual_review` maps `approve`→`approved` / `reject`→`rejected` (Repository stores status as free string; table comment says "pending / approved / rejected").
+- `dequeue_review` in Repository does NOT mutate status (peek-only) — confirmed by test: after approve, `dequeue_manual_review` returns None because `update_review_status` moved it out of `pending`. Good: dequeue is non-destructive, confirm is destructive.

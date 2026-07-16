@@ -1,0 +1,17 @@
+=== Task 10: ingestion uploader + validator + review_queue ===
+
+## Verification run (fixture PDF)
+ingest OK eebfb9bd1a154b99a8802f598b6b5e11 91b8691e
+
+## Review queue round-trip (inject Repository)
+enqueued 9cfc849ebb5c49d8ae9b1d842a6979fa
+dequeued 9cfc849ebb5c49d8ae9b1d842a6979fa 0b33a74c42d34ffbbcc9bfde74d491c8 test reason
+confirmed approve
+queue empty after approve
+REVIEW QUEUE OK
+
+## pytest
+10 passed, 4 skipped in 0.21s
+
+## LSP diagnostics
+All checks passed! (0 diagnostics across 4 ingestion files)

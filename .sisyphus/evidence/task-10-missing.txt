@@ -1,0 +1,7 @@
+=== Task 10: ingestion uploader — missing file error path ===
+
+## Verification run (missing file)
+ERR FileNotFoundError
+
+## LSP diagnostics
+All checks passed!
