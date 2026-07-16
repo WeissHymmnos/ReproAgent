@@ -15,7 +15,23 @@ class SchemaValidator:
         2. 数据字典映射（高置信 OK / 低置信 WARN）
         3. extraction_confidence 阈值
         """
-        raise NotImplementedError("SchemaValidator.validate")
+        if not spec.factor_name:
+            raise ValueError("factor_name cannot be empty")
+        if not spec.formula:
+            raise ValueError("formula cannot be empty")
+
+        new_mappings = []
+        for mapping in spec.data_dict_mappings:
+            tag = "OK" if mapping.confidence >= 0.8 else "WARN"
+            new_mappings.append(mapping.model_copy(update={"tag": tag}))
+
+        update_dict = {"data_dict_mappings": new_mappings}
+        
+        if spec.extraction_confidence < 0.5:
+            note = "\n[WARN] Low extraction confidence."
+            update_dict["description"] = spec.description + note
+
+        return spec.model_copy(update=update_dict)
 
     def validate_all(self, specs: list[ParsedFactorSpec]) -> list[ParsedFactorSpec]:
         """批量校验。"""
