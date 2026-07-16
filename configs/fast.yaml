@@ -1,0 +1,12 @@
+mode: fast
+workers: 2
+table_backend: paddle
+vlm_backend: none
+image_max_edge: 512
+resume: true
+out_dir: ./output
+sidecar: false
+cache_dir: null
+model_dir: ~/.cache/finreportparser/models
+cpu_threads: 4
+enable_hpi: false
