@@ -37,17 +37,117 @@ class ReflectionLoopController:
         initial_config: ReplicationConfig,
         reported: ReportedMetrics,
     ) -> ReflectionState:
-        """执行反思循环，返回最终 ReflectionState。"""
-        raise NotImplementedError("ReflectionLoopController.run")
+        import uuid
+        import math
+        from datetime import UTC, datetime
+        from reproagent.models.reflection import ReflectionStep
+
+        state = ReflectionState(
+            id=uuid.uuid4().hex,
+            factor_id=initial_config.factor_specs[0].id,
+            report_id=initial_config.report_id,
+            original_config=initial_config,
+            max_iterations=3,
+            current_iteration=0,
+            status="in_progress",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        self.repository.save_reflection_state(state)
+
+        current_config = initial_config
+
+        while state.current_iteration < state.max_iterations and state.status == "in_progress":
+            result = self.reproducer.reproduce(current_config)
+            
+            deviation = self.analyzer.analyze(result, reported, self.tolerances)
+            deviation.root_cause = self.analyzer.classify_root_cause(deviation, current_config)
+            
+            score = self._deviation_score(deviation)
+            
+            if deviation.passed:
+                state.status = "converged"
+                
+            step = ReflectionStep(
+                id=uuid.uuid4().hex,
+                state_id=state.id,
+                iteration=state.current_iteration,
+                prompt=self._build_reflection_prompt(state, deviation) if state.current_iteration > 0 else "",
+                response="",
+                revised_config=current_config,
+                deviation_report=deviation,
+                created_at=datetime.now(UTC),
+            )
+            
+            if state.best_deviation_score is None or score < state.best_deviation_score:
+                state.best_deviation_score = score
+                state.best_step_id = step.id
+            else:
+                no_improvement_streak = 0
+                for s in reversed(state.steps):
+                    if s.deviation_report:
+                        s_score = self._deviation_score(s.deviation_report)
+                        if s_score >= state.best_deviation_score:
+                            no_improvement_streak += 1
+                        else:
+                            break
+                if no_improvement_streak >= 1:
+                    state.status = "escalated"
+            
+            self.repository.save_reflection_step(step)
+            state = self.repository.get_reflection_state(state.id)
+            
+            if state.status in ("converged", "escalated"):
+                break
+                
+            prompt = self._build_reflection_prompt(state, deviation)
+            revised_spec = self.llm_extractor.revise(prompt, current_config.factor_specs[0])
+            
+            current_config = current_config.model_copy(deep=True)
+            current_config.factor_specs = [revised_spec]
+            
+            state.current_iteration += 1
+            self.repository.save_reflection_state(state)
+            
+        if state.status == "in_progress":
+            state.status = "exhausted"
+            self.repository.save_reflection_state(state)
+            
+        return state
 
     def _deviation_score(self, deviation: DeviationReport) -> float:
-        """归一化偏差得分：各指标偏差/容忍度的平方和开方。"""
-        raise NotImplementedError("ReflectionLoopController._deviation_score")
+        import math
+        if deviation.passed:
+            return 0.0
+        if not deviation.metric_deviations:
+            return 1.0
+            
+        sum_sq = 0.0
+        for k, v in deviation.metric_deviations.items():
+            if k == "ic_mean":
+                tol = self.tolerances.ic_mean_abs
+            elif k == "ic_ir":
+                tol = self.tolerances.ic_ir_abs
+            elif k == "long_short_annual_return":
+                tol = self.tolerances.long_short_return_rel
+                if tol == 0: tol = 5.0
+            elif k == "sharpe_ratio":
+                tol = self.tolerances.sharpe_abs
+            elif k == "max_drawdown":
+                tol = self.tolerances.max_drawdown_abs
+            else:
+                tol = 1.0
+            sum_sq += (v / tol) ** 2
+        return math.sqrt(sum_sq)
 
     def _build_reflection_prompt(
         self,
         state: ReflectionState,
         latest_deviation: DeviationReport,
     ) -> str:
-        """用 prompts.REFLECTION_PROMPT 构建含完整历史的 prompt。"""
-        raise NotImplementedError("ReflectionLoopController._build_reflection_prompt")
+        from reproagent.parser.prompts import REFLECTION_PROMPT
+        return REFLECTION_PROMPT.render(
+            original_spec=state.original_config.factor_specs[0],
+            history=state.steps,
+            latest_deviation=latest_deviation,
+        )
