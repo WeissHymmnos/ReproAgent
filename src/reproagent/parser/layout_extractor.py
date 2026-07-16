@@ -15,7 +15,7 @@ class LayoutExtractor:
 
     def __init__(
         self,
-        backend: Literal["marker", "llamaparse", "mineru"] = "marker",
+        backend: Literal["finpdfpro", "marker", "llamaparse", "mineru"] = "finpdfpro",
     ) -> None:
         self.backend = backend
 

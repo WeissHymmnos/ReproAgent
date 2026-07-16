@@ -19,6 +19,11 @@ dependencies = [
     "openai>=1.40",
     "anthropic>=0.30",
     "matplotlib>=3.8",
+    "pymupdf>=1.24.11",
+    "tqdm>=4.65.0",
+    "pillow>=10.0.0",
+    "httpx>=0.25.0",
+    "pandas>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -28,12 +33,14 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
 ]
-parser-marker = ["marker-pdf>=1.0"]
-parser-llama = ["llama-parse>=0.4"]
-parser-mineru = ["magic-pdf>=0.8"]
 rqalpha = ["rqalpha>=6.1"]
 pdf-vision = ["pdf2image>=1.17"]
 instructor = ["instructor>=1.0"]
+ricequant = ["rqdatac"]
+qlib = []
+paddle = ["paddleocr"]
+vlm = ["transformers", "torch"]
+formula = ["pix2text"]
 
 [project.scripts]
 reproagent = "reproagent.cli:app"
@@ -43,11 +50,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/reproagent"]
+packages = ["src/reproagent", "src/finreportparser"]
 
 # src 布局：将 src/reproagent 作为包 reproagent 安装
 [tool.hatch.build.targets.wheel.force-include]
 "src/reproagent" = "reproagent"
+"src/finreportparser" = "finreportparser"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
