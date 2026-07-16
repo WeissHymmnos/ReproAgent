@@ -1,0 +1,16 @@
+=== Task 7: persistence repository CRUD + WAL ===
+
+## Verification run
+journal_mode= wal
+report: Zhang ['e1', 'e2'] 2024-01-01 中信
+upsert: invalid
+by_hash: True
+lib: True True 1
+steps: 1
+step update: p2
+review: True
+dequeue after approve: None
+ALL OK
+
+## LSP diagnostics
+All checks passed!

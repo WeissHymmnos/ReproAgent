@@ -7,14 +7,28 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import event
 from sqlmodel import Session, SQLModel, create_engine
 
 
 def get_engine(db_path: Path, *, echo: bool = False) -> Any:
-    """创建 SQLModel/SQLAlchemy engine。"""
+    """创建 SQLModel/SQLAlchemy engine。
+
+    - ``check_same_thread=False``：允许跨线程使用（CLI / TUI / 后台任务）。
+    - 启用 WAL journal_mode，提升并发读与崩溃恢复能力。
+    """
     db_path.parent.mkdir(parents=True, exist_ok=True)
     url = f"sqlite:///{db_path}"
-    return create_engine(url, echo=echo)
+    engine = create_engine(url, echo=echo, connect_args={"check_same_thread": False})
+
+    @event.listens_for(engine, "connect")
+    def _enable_wal(dbapi_conn: Any, _record: Any) -> None:  # noqa: ANN401
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.close()
+
+    return engine
 
 
 def init_db(engine: Any) -> None:

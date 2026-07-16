@@ -1,0 +1,14 @@
+Verification command:
+uv run python -c "
+from pathlib import Path
+from reproagent.utils.plotting import save_equity_curve_chart, save_group_returns_chart, save_ic_timeseries_chart
+out=Path('/tmp/eq.png')
+save_equity_curve_chart([1,1.1,1.05,1.2], out)
+assert out.exists() and out.stat().st_size>0
+save_group_returns_chart({1:0.01,2:0.02,3:0.03}, Path('/tmp/grp.png'))
+save_ic_timeseries_chart([0.01,-0.02,0.03], Path('/tmp/ic.png'))
+print('plot OK', out.stat().st_size)
+"
+
+Output:
+plot OK 34988

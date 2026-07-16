@@ -40,3 +40,16 @@
 - Created `__main__.py` to allow running the package as a module (`python -m reproagent.legacy_quant`) which seeds demo data to `/tmp/legacy_factor.db` and generates the HTML dashboard to `/tmp/factor_library.html`.
 - Cleaned up the virtual environment's site-packages to ensure the editable install of `reproagent` is correctly resolved from the `src/` directory.
 - Verified the package imports and functionality using the specified verification commands, and saved the outputs to `.sisyphus/evidence/task-4-legacy-import.txt` and `.sisyphus/evidence/task-4-seed.txt`.
+
+## Task 9: Implement plotting utilities
+- Implemented `save_equity_curve_chart`, `save_group_returns_chart`, and `save_ic_timeseries_chart` in `src/reproagent/utils/plotting.py`.
+- Configured matplotlib to use the non-interactive `'Agg'` backend before importing `pyplot` to prevent GUI-related errors in headless environments.
+- Handled various input data formats (lists, dicts, pandas Series) robustly.
+- Ensured parent directories are created automatically and figures are closed properly to prevent memory leaks.
+
+## Task 8: Implement CacheManager in `src/reproagent/cache/cache_manager.py`
+- Implemented `CacheManager` to manage filesystem cache under `paths.cache_entry_dir(cache_key)/`.
+- Handled serialization and deserialization of `ParsedFactorSpec` lists, `ReplicationConfig`, and `BacktestResult` using Pydantic v2 `model_dump`, `model_validate`, `model_dump_json`, and `model_validate_json`.
+- Implemented `get_cached_backtest` to support both single `backtest.json` matching the requested `factor_id` and keyed `backtest_{factor_id}.json` files.
+- Ensured directories are created automatically on `save`.
+- Verified the implementation with a comprehensive roundtrip test script and ensured `lsp_diagnostics` is completely clean.

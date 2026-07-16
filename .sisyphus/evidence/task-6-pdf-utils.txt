@@ -1,0 +1,7 @@
+PDF Utils Implementation Evidence:
+- get_page_count(Path('tests/fixtures/sample_reports/minimal.pdf')) -> 2
+- has_pdf_header(Path('tests/fixtures/sample_reports/minimal.pdf')) -> True
+- is_readable(Path('tests/fixtures/sample_reports/minimal.pdf')) -> True
+
+Error Handling:
+- get_page_count(Path('/tmp/no_such_file_xyz.pdf')) -> FileNotFoundError

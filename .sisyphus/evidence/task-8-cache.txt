@@ -1,0 +1,5 @@
+Verification of CacheManager:
+Command: uv run python -c "from pathlib import Path; import tempfile; from reproagent.persistence.paths import AppPaths; from reproagent.cache.cache_manager import CacheManager; from reproagent.settings import Settings; s=Settings(data_dir=Path(tempfile.mkdtemp())); paths=AppPaths.from_settings(s); paths.ensure_layout(); cm=CacheManager(paths); assert cm.get_cached('missing') is None; print('cache miss OK'); print(CacheManager)"
+Output:
+cache miss OK
+<class 'reproagent.cache.cache_manager.CacheManager'>

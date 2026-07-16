@@ -461,7 +461,7 @@ Wave FINAL:
 
   **Commit**: YES — `test(fixtures): minimal pdf and synthetic ohlcv`
 
-- [ ] 6. 实现 utils/pdf.py
+- [x] 6. 实现 utils/pdf.py
 
   **What to do**:
   - 用 `pypdf` 实现 `get_page_count`, `is_readable`, `has_pdf_header`
@@ -507,7 +507,7 @@ except Exception as e:
 
   **Commit**: YES — `feat(utils): implement pdf helpers`
 
-- [ ] 7. 实现 persistence repository + db 完善
+- [x] 7. 实现 persistence repository + db 完善
 
   **What to do**:
   - 实现 `persistence/repository.py` 全部 CRUD：reports / library / reflection / review queue
@@ -560,7 +560,7 @@ print('repo OK')
 
   **Commit**: YES — `feat(persistence): implement repository CRUD`
 
-- [ ] 8. 实现 cache_manager
+- [x] 8. 实现 cache_manager
 
   **What to do**:
   - 实现 `CacheManager.get_cached` / `get_cached_backtest` / `save`
@@ -595,7 +595,7 @@ print('cache API import OK', CacheManager)
 
   **Commit**: YES — `feat(cache): implement filesystem cache manager`
 
-- [ ] 9. 实现 utils/plotting.py
+- [x] 9. 实现 utils/plotting.py
 
   **What to do**:
   - matplotlib 实现 equity / group returns / IC timeseries 存 PNG
