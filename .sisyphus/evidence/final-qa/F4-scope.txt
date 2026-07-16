@@ -1,0 +1,16 @@
+Final Wave F4 — Scope Fidelity
+Date: 2026-07-17
+
+Checks:
+[x] No aiminer LangGraph/swarm/RAG/chroma in src/reproagent (rg clean)
+[x] No alpha-lens DSR/PBO/MinBTL implementation
+[x] PDF primary backend is finreportparser (vendored), not marker
+[x] legacy_quant is side module under src/reproagent/legacy_quant
+[x] finpdfpro scripts/output/data NOT vendored — only src/finreportparser + configs/
+[x] configs/default.yaml,fast.yaml,max_quality.yaml present
+
+Notes:
+- ruff style debt remains (E501 etc.) non-blocking per F2
+- offline mock pipeline returns review_enqueued when reflection exhausts (expected without real LLM convergence)
+
+VERDICT: APPROVE

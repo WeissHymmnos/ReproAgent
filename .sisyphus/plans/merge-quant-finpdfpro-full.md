@@ -1414,16 +1414,16 @@ print('screens ok')
 
 ## Final Verification Wave
 
-- [ ] F1. **Plan Compliance Audit** — `oracle`
+- [x] F1. **Plan Compliance Audit** — `oracle`
   对照 Must Have / Must NOT Have；检查 evidence；`VERDICT: APPROVE/REJECT`
 
-- [ ] F2. **Code Quality Review** — `unspecified-high`
+- [x] F2. **Code Quality Review** — `unspecified-high`
   `uv run ruff check src tests`；`uv run pytest -q`；扫 `NotImplementedError` 残留与 AI slop
 
-- [ ] F3. **Real Manual QA** — `unspecified-high`
+- [x] F3. **Real Manual QA** — `unspecified-high`
   执行全部关键 CLI/python -c 场景；证据写入 `.sisyphus/evidence/final-qa/`
 
-- [ ] F4. **Scope Fidelity Check** — `deep`
+- [x] F4. **Scope Fidelity Check** — `deep`
   确认未引入 aiminer swarm/RAG；未做 alpha-lens 进阶；vendor 未拷 scripts/output
 
 ---

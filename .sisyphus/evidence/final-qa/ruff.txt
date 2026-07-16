@@ -1,0 +1,1754 @@
+E501 Line too long (114 > 100)
+  --> src/finreportparser/batch/runner.py:27:101
+   |
+25 |         return (pdf_path, False, None, None, f"FAIL: {e}")
+26 |
+27 | def run_batch(dir_path: Path, config: Config, out_dir: str | None = None, resume: bool = True) -> tuple[int, int]:
+   |                                                                                                     ^^^^^^^^^^^^^^
+28 |     pdf_files = sorted(dir_path.glob("*.pdf"))
+29 |     if not pdf_files:
+   |
+
+E501 Line too long (106 > 100)
+  --> src/finreportparser/batch/runner.py:47:101
+   |
+45 |         for pdf in pdf_files:
+46 |             logger.info(f"--- {pdf.name} ---")
+47 |             _, is_success, md_path, json_path, err_msg = _process_single_pdf(pdf, config, out_dir, resume)
+   |                                                                                                     ^^^^^^
+48 |             if is_success:
+49 |                 logger.info(f"  markdown: {md_path}")
+   |
+
+E501 Line too long (101 > 100)
+  --> src/finreportparser/batch/runner.py:57:101
+   |
+55 |     else:
+56 |         ctx = multiprocessing.get_context("spawn")
+57 |         with concurrent.futures.ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as executor:
+   |                                                                                                     ^
+58 |             futures = {
+59 |                 executor.submit(_process_single_pdf, pdf, config, out_dir, resume): pdf
+   |
+
+E501 Line too long (110 > 100)
+   --> src/finreportparser/cli.py:201:101
+    |
+199 |         typer.echo("OK    transformers: available")
+200 |     else:
+201 |         typer.echo("WARN  transformers: not installed (SmolVLM backend unavailable; uv sync --extra smolvlm)")
+    |                                                                                                     ^^^^^^^^^^
+202 |         warnings += 1
+    |
+
+E501 Line too long (117 > 100)
+   --> src/finreportparser/cli.py:272:101
+    |
+270 |         typer.echo("OK    pix2text: available")
+271 |     else:
+272 |         typer.echo("WARN  pix2text: not installed (formula extraction will fallback to L1; uv sync --extra formula)")
+    |                                                                                                     ^^^^^^^^^^^^^^^^^
+273 |         warnings += 1
+    |
+
+E501 Line too long (147 > 100)
+   --> src/finreportparser/extract/pdf_images.py:147:101
+    |
+145 | …
+146 | …
+147 | …ct.get_area() / rect.get_area() > 0.5 or intersect.get_area() / r_rect.get_area() > 0.5):
+    |                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+148 | …
+149 | …
+    |
+
+E501 Line too long (104 > 100)
+  --> src/finreportparser/extract/pdf_text.py:64:101
+   |
+62 |             ))
+63 |
+64 |     blocks.sort(key=lambda b: (round(b.bbox.y0 / 10) * 10 if b.bbox else 0, b.bbox.x0 if b.bbox else 0))
+   |                                                                                                     ^^^^
+65 |
+66 |     full_text = "\n".join(b.text for b in blocks if b.text)
+   |
+
+E501 Line too long (118 > 100)
+   --> src/finreportparser/fusion/formula_map.py:173:101
+    |
+171 |     if re.search(r"\bES\b|\bVaR\b|\bCVaR\b", formula_text):
+172 |         return True
+173 |     if formula_text and sum(1 for c in formula_text if 0xE000 <= ord(c) <= 0xF8FF) / max(len(formula_text), 1) > 0.02:
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^
+174 |         return True
+175 |     return False
+    |
+
+E501 Line too long (109 > 100)
+  --> src/finreportparser/fusion/metrics.py:12:62
+   |
+10 |     r"毛利润",
+11 |     r"净利润",
+12 |     r"归属于母公司股东的净利润", r"归属于上市公司股东的净利润", r"归属于母公司所有者的净利润", r"归母净利润",
+   |                                                                                                      ^^^^^^^^
+13 |     r"扣除非经常性损益后的净利润", r"归属于上市公司股东的扣除非经常性损益的净利润", r"扣非净利润", r"扣非",
+14 |     r"基本每股收益", r"稀释每股收益",
+   |
+
+E501 Line too long (107 > 100)
+  --> src/finreportparser/fusion/metrics.py:13:61
+   |
+11 |     r"净利润",
+12 |     r"归属于母公司股东的净利润", r"归属于上市公司股东的净利润", r"归属于母公司所有者的净利润", r"归母净利润",
+13 |     r"扣除非经常性损益后的净利润", r"归属于上市公司股东的扣除非经常性损益的净利润", r"扣非净利润", r"扣非",
+   |                                                                                                     ^^^^^^^
+14 |     r"基本每股收益", r"稀释每股收益",
+15 |     r"总资产", r"归母净资产",
+   |
+
+E501 Line too long (116 > 100)
+  --> src/finreportparser/fusion/metrics.py:26:68
+   |
+24 |     r'(?:(?:¥|￥|RMB|CNY|USD|\$)\s*)?(?:(?:\d{4})\s*(?:年)?\s*(?:H[12]|Q[1-4])?\s*[:：]?\s*)?('
+25 |     + '|'.join(METRIC_NAMES)
+26 |     + r')\s*[:：]?\s*(同比增长|环比增长|同比下降|同比减少|同比下滑|同比\+|同比|环比|增长|上升|增加|下降|下滑|减少)?'
+   |                                                                                                      ^^^^^^^^^^^^^^^
+27 |     r'\s*(?:(?:\d{4})\s*(?:年)?\s*(?:H[12]|Q[1-4])?\s*[:：]?\s*)?\s*(?:(?:¥|￥|RMB|CNY|USD|\$)\s*)?'
+28 |     r'([+-]?\d+(?:\.\d+)?)\s*(?:(?:-|~|至)\s*(?:(?:¥|￥|RMB|CNY|USD|\$)\s*)?[+-]?\d+(?:\.\d+)?\s*)?'
+   |
+
+E501 Line too long (104 > 100)
+  --> src/finreportparser/fusion/metrics.py:86:89
+   |
+84 |                 ):
+85 |                     is_yoy = True
+86 |                 elif any(v in context_prefix for v in ['增长', '上升', '增加', '下降', '下滑', '减少']):
+   |                                                                                                     ^^^^
+87 |                     is_yoy = True
+   |
+
+E501 Line too long (106 > 100)
+   --> src/finreportparser/fusion/quality.py:101:101
+    |
+ 99 |     return warnings
+100 |
+101 | def reprocess_low_conf(doc: DocumentResult, ocr_fn: Callable[[str], str] | None = None) -> DocumentResult:
+    |                                                                                                     ^^^^^^
+102 |     if ocr_fn is None:
+103 |         import importlib.util
+    |
+
+E501 Line too long (101 > 100)
+  --> src/finreportparser/fusion/rules_numbers.py:55:101
+   |
+53 |     return spans
+54 |
+55 | def check_table_sum_consistency(numbers: list[float], total: float, tolerance: float = 0.01) -> bool:
+   |                                                                                                     ^
+56 |     return abs(sum(numbers) - total) <= tolerance
+   |
+
+E501 Line too long (110 > 100)
+  --> src/finreportparser/fusion/tables_cross_page.py:57:101
+   |
+55 |     lines2 = table2.strip().split('\n')
+56 |
+57 |     if len(lines2) > 2 and set(lines2[1].strip().replace('|', '').replace('-', '').replace(' ', '')) == set():
+   |                                                                                                     ^^^^^^^^^^
+58 |         lines2 = lines2[2:]
+59 |     elif len(lines2) > 1 and '|' in lines2[0]:
+   |
+
+E501 Line too long (104 > 100)
+   --> src/finreportparser/fusion/tables_cross_page.py:105:101
+    |
+103 |                         if cols1 != cols2:
+104 |                             logger.warning(
+105 |                                 f"Column count mismatch between tables on page {current_page.page_num} "
+    |                                                                                                     ^^^^
+106 |                                 f"({cols1} cols) and {next_page.page_num} ({cols2} cols). Attempting reconciliation."
+107 |                             )
+    |
+
+E501 Line too long (117 > 100)
+   --> src/finreportparser/fusion/tables_cross_page.py:106:101
+    |
+104 | …                     logger.warning(
+105 | …                         f"Column count mismatch between tables on page {current_page.page_num} "
+106 | …                         f"({cols1} cols) and {next_page.page_num} ({cols2} cols). Attempting reconciliation."
+    |                                                                                               ^^^^^^^^^^^^^^^^^
+107 | …                     )
+108 | …                     target_cols = max(cols1, cols2)
+    |
+
+E501 Line too long (107 > 100)
+   --> src/finreportparser/fusion/tables_cross_page.py:123:101
+    |
+121 |                                 last_block.metadata = {}
+122 |
+123 |                             source_pages = last_block.metadata.get('source_pages', [current_page.page_num])
+    |                                                                                                     ^^^^^^^
+124 |                             if first_block.metadata:
+125 |                                 next_source_pages = first_block.metadata.get(
+    |
+
+E501 Line too long (107 > 100)
+   --> src/finreportparser/ocr/structure.py:141:101
+    |
+139 |                         try:
+140 |                             if len(box_data) == 4 and isinstance(box_data[0], (int, float)):
+141 |                                 bbox = BBox(x0=box_data[0], y0=box_data[1], x1=box_data[2], y1=box_data[3])
+    |                                                                                                     ^^^^^^^
+142 |                             elif len(box_data) == 4 and isinstance(box_data[0], (list, tuple)):
+143 |                                 xs = [p[0] for p in box_data]
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/finreportparser/pipeline/orchestrator.py:1:1
+   |
+ 1 | / import logging
+ 2 | | from pathlib import Path
+ 3 | |
+ 4 | | from finreportparser.batch.cache import PageCacheStore, canonical_mode_flags, compute_pdf_content_hash, page_cache_key
+ 5 | | from finreportparser.config import Config, load_config
+ 6 | | from finreportparser.extract.pdf_images import extract_page_images, render_full_page
+ 7 | | from finreportparser.extract.pdf_text import CorruptPdfError, extract_page_text, open_pdf
+ 8 | | from finreportparser.extract.toc import extract_toc
+ 9 | | from finreportparser.fusion.metrics import extract_metrics, extract_metrics_from_table
+10 | | from finreportparser.fusion.quality import run_quality_checks
+11 | | from finreportparser.fusion.tables_cross_page import merge_continued_tables
+12 | | from finreportparser.output import write_document
+13 | | from finreportparser.pipeline.page_router import route_page
+14 | | from finreportparser.pipeline.reconstruct import merge_page_content, reconstruct_document_pages
+15 | | from finreportparser.types import (
+16 | |     BBox,
+17 | |     BlockType,
+18 | |     DocumentMetadata,
+19 | |     DocumentResult,
+20 | |     PageBlock,
+21 | |     PageClass,
+22 | |     QualityMode,
+23 | |     TableExtract,
+24 | | )
+25 | | from finreportparser.utils.memory import release_page_resources
+   | |_______________________________________________________________^
+26 |
+27 |   logger = logging.getLogger(__name__)
+   |
+help: Organize imports
+
+E501 Line too long (118 > 100)
+ --> src/finreportparser/pipeline/orchestrator.py:4:101
+  |
+2 | from pathlib import Path
+3 |
+4 | from finreportparser.batch.cache import PageCacheStore, canonical_mode_flags, compute_pdf_content_hash, page_cache_key
+  |                                                                                                     ^^^^^^^^^^^^^^^^^^
+5 | from finreportparser.config import Config, load_config
+6 | from finreportparser.extract.pdf_images import extract_page_images, render_full_page
+  |
+
+E501 Line too long (108 > 100)
+  --> src/finreportparser/pipeline/orchestrator.py:37:101
+   |
+35 |             ys = [p[1] for p in line.bbox]
+36 |             bbox = BBox(x0=min(xs), y0=min(ys), x1=max(xs), y1=max(ys))
+37 |         blocks.append(PageBlock(type=BlockType.TEXT, text=line.text, confidence=line.confidence, bbox=bbox))
+   |                                                                                                     ^^^^^^^^
+38 |     return blocks
+   |
+
+E501 Line too long (120 > 100)
+   --> src/finreportparser/pipeline/orchestrator.py:190:101
+    |
+189 | …                     if is_acceptable_table(best_gfm):
+190 | …                         accepted_tables.append(TableExtract(gfm=best_gfm, bbox=extract.bbox, html=extract.html))
+    |                                                                                               ^^^^^^^^^^^^^^^^^^^^
+191 | …                     else:
+192 | …                         rejected_count += 1
+    |
+
+E501 Line too long (110 > 100)
+   --> src/finreportparser/pipeline/orchestrator.py:195:101
+    |
+194 |                         if rejected_count > 0:
+195 |                             logger.info("Rejected %d low-quality tables on page %d", rejected_count, page_num)
+    |                                                                                                     ^^^^^^^^^^
+196 |
+197 |                         if accepted_tables:
+    |
+
+E501 Line too long (106 > 100)
+   --> src/finreportparser/pipeline/orchestrator.py:207:101
+    |
+205 |                     if "not installed" not in str(e):
+206 |                         raise
+207 |                     logger.warning(f"{config.table_backend} not available, skipping structure extraction")
+    |                                                                                                     ^^^^^^
+208 |
+209 |             if decision.run_vlm:
+    |
+
+E501 Line too long (101 > 100)
+   --> src/finreportparser/pipeline/orchestrator.py:231:101
+    |
+230 | …                     if vlm and not chart_meta.description.startswith("["):
+231 | …                         mermaid_candidates = vlm.diagram_to_mermaid_candidates(img_bytes)
+    |                                                                                           ^
+232 | …                         for code in mermaid_candidates:
+233 | …                             from finreportparser.fusion.mermaid import mermaid_or_fallback
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> src/finreportparser/pipeline/orchestrator.py:233:41
+    |
+231 | …                     mermaid_candidates = vlm.diagram_to_mermaid_candidates(img_bytes)
+232 | …                     for code in mermaid_candidates:
+233 | …                         from finreportparser.fusion.mermaid import mermaid_or_fallback
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+234 | …                         valid_code, fallback = mermaid_or_fallback(
+235 | …                             code, "Failed to generate valid Mermaid diagram."
+    |
+help: Organize imports
+
+E501 Line too long (102 > 100)
+   --> src/finreportparser/pipeline/orchestrator.py:233:101
+    |
+231 | …                     mermaid_candidates = vlm.diagram_to_mermaid_candidates(img_bytes)
+232 | …                     for code in mermaid_candidates:
+233 | …                         from finreportparser.fusion.mermaid import mermaid_or_fallback
+    |                                                                                       ^^
+234 | …                         valid_code, fallback = mermaid_or_fallback(
+235 | …                             code, "Failed to generate valid Mermaid diagram."
+    |
+
+E501 Line too long (105 > 100)
+   --> src/finreportparser/pipeline/orchestrator.py:277:101
+    |
+276 |     pages = reconstruct_document_pages(
+277 |         pages, formula_backend=config.formula_backend, recognizer=recognizer, crop_callback=crop_callback
+    |                                                                                                     ^^^^^
+278 |     )
+279 |     pages = merge_continued_tables(pages)
+    |
+
+E501 Line too long (118 > 100)
+  --> src/finreportparser/pipeline/page_router.py:32:101
+   |
+30 |     lines = full_text.split('\n')
+31 |     pipe_count = full_text.count('|')
+32 |     digit_heavy_lines = sum(1 for line in lines if sum(c.isdigit() for c in line) > len(line) * 0.3 and len(line) > 5)
+   |                                                                                                     ^^^^^^^^^^^^^^^^^^
+33 |
+34 |     if pipe_count > 5 or digit_heavy_lines > 3:
+   |
+
+E501 Line too long (109 > 100)
+   --> src/finreportparser/pipeline/reconstruct.py:202:101
+    |
+201 |             source = "l1"
+202 |             if recognizer and crop_callback and block.bbox and worth_l3_recognition(formula_text, eq_number):
+    |                                                                                                     ^^^^^^^^^
+203 |                 try:
+204 |                     crop_bbox = block.bbox
+    |
+
+E731 Do not assign a `lambda` expression, use a `def`
+   --> src/finreportparser/pipeline/reconstruct.py:333:17
+    |
+331 |             page_crop_cb = None
+332 |             if crop_callback:
+333 |                 page_crop_cb = lambda bbox, p=page.page_num: crop_callback(p, bbox)
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+334 |             blocks = promote_formulas(blocks, recognizer=recognizer, crop_callback=page_crop_cb)
+    |
+help: Rewrite `page_crop_cb` as a `def`
+
+UP042 Class BlockType inherits from both `str` and `enum.Enum`
+ --> src/finreportparser/types.py:7:7
+  |
+7 | class BlockType(str, Enum):
+  |       ^^^^^^^^^
+8 |     TEXT = "text"
+9 |     TABLE = "table"
+  |
+help: Inherit from `enum.StrEnum`
+
+UP042 Class QualityMode inherits from both `str` and `enum.Enum`
+  --> src/finreportparser/types.py:18:7
+   |
+16 |     FORMULA = "formula"
+17 |
+18 | class QualityMode(str, Enum):
+   |       ^^^^^^^^^^^
+19 |     FAST = "fast"
+20 |     BALANCED = "balanced"
+   |
+help: Inherit from `enum.StrEnum`
+
+UP042 Class TableBackend inherits from both `str` and `enum.Enum`
+  --> src/finreportparser/types.py:23:7
+   |
+21 |     MAX_QUALITY = "max-quality"
+22 |
+23 | class TableBackend(str, Enum):
+   |       ^^^^^^^^^^^^
+24 |     PADDLE = "paddle"
+25 |     MINERU = "mineru"
+   |
+help: Inherit from `enum.StrEnum`
+
+UP042 Class VlmBackend inherits from both `str` and `enum.Enum`
+  --> src/finreportparser/types.py:27:7
+   |
+25 |     MINERU = "mineru"
+26 |
+27 | class VlmBackend(str, Enum):
+   |       ^^^^^^^^^^
+28 |     NONE = "none"
+29 |     PADDLE_VL = "paddle_vl"
+   |
+help: Inherit from `enum.StrEnum`
+
+UP042 Class PageClass inherits from both `str` and `enum.Enum`
+  --> src/finreportparser/types.py:33:7
+   |
+31 |     LLAMACPP_HTTP = "llamacpp_http"
+32 |
+33 | class PageClass(str, Enum):
+   |       ^^^^^^^^^
+34 |     BLANK = "blank"
+35 |     TEXT_RICH = "text_rich"
+   |
+help: Inherit from `enum.StrEnum`
+
+E501 Line too long (119 > 100)
+   --> src/finreportparser/utils/memory.py:117:101
+    |
+115 |     try:
+116 |         import paddle
+117 |         if hasattr(paddle, "device") and hasattr(paddle.device, "cuda") and hasattr(paddle.device.cuda, "empty_cache"):
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^
+118 |             paddle.device.cuda.empty_cache()
+119 |     except ImportError:
+    |
+
+E501 Line too long (102 > 100)
+  --> src/finreportparser/vlm/llamacpp_http.py:25:101
+   |
+23 |         self.client = httpx.Client(timeout=60.0, trust_env=False)
+24 |
+25 |     def _call_api(self, image_bytes: bytes, prompt: str, schema: dict[str, Any] | None = None) -> str:
+   |                                                                                                     ^^
+26 |         b64_img = base64.b64encode(image_bytes).decode('utf-8')
+   |
+
+E501 Line too long (105 > 100)
+  --> src/finreportparser/vlm/llamacpp_http.py:33:101
+   |
+31 |                     "role": "user",
+32 |                     "content": [
+33 |                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}},
+   |                                                                                                     ^^^^^
+34 |                         {"type": "text", "text": prompt}
+35 |                     ]
+   |
+
+E501 Line too long (101 > 100)
+  --> src/finreportparser/vlm/llamacpp_http.py:60:101
+   |
+58 |                 payload["messages"][0]["content"][1]["text"] = sanitized_prompt
+59 |                 try:
+60 |                     response = self.client.post(f"{self.base_url}/v1/chat/completions", json=payload)
+   |                                                                                                     ^
+61 |                     response.raise_for_status()
+62 |                     return response.json()["choices"][0]["message"]["content"]
+   |
+
+E501 Line too long (106 > 100)
+   --> src/finreportparser/vlm/llamacpp_http.py:100:101
+    |
+ 99 |     def diagram_to_mermaid_candidates(self, image_bytes: bytes) -> list[str]:
+100 |         prompt = "Convert this diagram into Mermaid flowchart syntax. Return ONLY the Mermaid code block."
+    |                                                                                                     ^^^^^^
+101 |         try:
+102 |             result_str = self._call_api(image_bytes, prompt)
+    |
+
+E501 Line too long (111 > 100)
+  --> src/finreportparser/vlm/paddle_vl.py:17:76
+   |
+15 | _PIE_KEYWORDS = ("饼", "pie", "占比", "结构", "donut")
+16 | _FLOW_KEYWORDS = ("流程", "步骤", "→", "->", "flowchart", "flow")
+17 | _NOISE_KEYWORDS = {"haitong", "海通证券", "证券研究报告", "金融工程研究", "请务必阅读", "资料来源", "数据来源"}
+   |                                                                                                     ^^^^^^^^^^^
+   |
+
+E501 Line too long (101 > 100)
+  --> src/finreportparser/vlm/paddle_vl.py:46:101
+   |
+44 |         return "line"
+45 |     
+46 |     date_count = sum(1 for t in texts if re.match(r'^(20\d{2}|\d{2}-\d{2}|\d{4}-\d{2})$', t.strip()))
+   |                                                                                                     ^
+47 |     if date_count >= 3:
+48 |         return "line"
+   |
+
+E501 Line too long (102 > 100)
+   --> src/finreportparser/vlm/paddle_vl.py:166:101
+    |
+165 |         if not self.has_paddle and self.model_client is None:
+166 |             logger.warning("PaddleOCR/PaddleX not found. PaddleVLProvider will return empty results.")
+    |                                                                                                     ^^
+167 |
+168 |     def _ensure_ocr_engine(self):
+    |
+
+E501 Line too long (108 > 100)
+   --> src/finreportparser/vlm/paddle_vl.py:188:101
+    |
+186 |                 chart_type="unknown",
+187 |                 title="Unknown Chart",
+188 |                 description="[PaddleVL: PaddleOCR/PaddleX not installed. Chart description not available.]",
+    |                                                                                                     ^^^^^^^^
+189 |                 data_points=[]
+190 |             )
+    |
+
+E501 Line too long (106 > 100)
+  --> src/finreportparser/vlm/sidecar.py:55:101
+   |
+53 |         while time.time() - start_time < timeout:
+54 |             if self.process and self.process.poll() is not None:
+55 |                 raise RuntimeError(f"llama-server exited prematurely with code {self.process.returncode}")
+   |                                                                                                     ^^^^^^
+56 |
+57 |             try:
+   |
+
+E501 Line too long (117 > 100)
+  --> src/finreportparser/vlm/smolvlm.py:32:101
+   |
+30 |             self._processor = AutoProcessor.from_pretrained(model_id)
+31 |
+32 |             dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float32
+   |                                                                                                     ^^^^^^^^^^^^^^^^^
+33 |
+34 |             self._model = AutoModelForVision2Seq.from_pretrained(
+   |
+
+E501 Line too long (102 > 100)
+   --> src/finreportparser/vlm/smolvlm.py:144:101
+    |
+142 |             image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+143 |
+144 |             prompt = "Convert this diagram to a Mermaid.js graph. Output only the Mermaid code block."
+    |                                                                                                     ^^
+145 |
+146 |             messages = [
+    |
+
+E501 Line too long (106 > 100)
+   --> src/finreportparser/vlm/smolvlm.py:179:101
+    |
+177 |                 if len(parts) > 1:
+178 |                     code = parts[1].strip()
+179 |                     if code.startswith("graph") or code.startswith("flowchart") or code.startswith("pie"):
+    |                                                                                                     ^^^^^^
+180 |                         return [code]
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/reproagent/deviation/reflection_loop.py:40:9
+   |
+38 |           reported: ReportedMetrics,
+39 |       ) -> ReflectionState:
+40 | /         import uuid
+41 | |         import math
+42 | |         from datetime import UTC, datetime
+43 | |         from reproagent.models.reflection import ReflectionStep
+   | |_______________________________________________________________^
+44 |
+45 |           state = ReflectionState(
+   |
+help: Organize imports
+
+F401 [*] `math` imported but unused
+  --> src/reproagent/deviation/reflection_loop.py:41:16
+   |
+39 |     ) -> ReflectionState:
+40 |         import uuid
+41 |         import math
+   |                ^^^^
+42 |         from datetime import UTC, datetime
+43 |         from reproagent.models.reflection import ReflectionStep
+   |
+help: Remove unused import: `math`
+
+E501 Line too long (110 > 100)
+  --> src/reproagent/deviation/reflection_loop.py:75:101
+   |
+73 |                 state_id=state.id,
+74 |                 iteration=state.current_iteration,
+75 |                 prompt=self._build_reflection_prompt(state, deviation) if state.current_iteration > 0 else "",
+   |                                                                                                     ^^^^^^^^^^
+76 |                 response="",
+77 |                 revised_config=current_config,
+   |
+
+E701 Multiple statements on one line (colon)
+   --> src/reproagent/deviation/reflection_loop.py:133:28
+    |
+131 |             elif k == "long_short_annual_return":
+132 |                 tol = self.tolerances.long_short_return_rel
+133 |                 if tol == 0: tol = 5.0
+    |                            ^
+134 |             elif k == "sharpe_ratio":
+135 |                 tol = self.tolerances.sharpe_abs
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+ --> src/reproagent/legacy_quant/__init__.py:1:1
+  |
+1 | / from .factor_db import FactorDB
+2 | | from .factor_research_pipeline import FactorDiscoverer, DeviationController
+3 | | from .factor_library_dashboard import generate_dashboard
+  | |________________________________________________________^
+4 |
+5 |   __all__ = ["FactorDB", "FactorDiscoverer", "DeviationController", "generate_dashboard"]
+  |
+help: Organize imports
+
+I001 [*] Import block is un-sorted or un-formatted
+ --> src/reproagent/legacy_quant/__main__.py:1:1
+  |
+1 | / from pathlib import Path
+2 | | from .factor_db import FactorDB
+3 | | from .factor_library_dashboard import generate_dashboard
+  | |________________________________________________________^
+4 |
+5 |   def main():
+  |
+help: Organize imports
+
+E401 [*] Multiple imports on one line
+ --> src/reproagent/legacy_quant/factor_db.py:1:1
+  |
+1 | import json, sqlite3
+  | ^^^^^^^^^^^^^^^^^^^^
+2 | from pathlib import Path
+3 | from typing import Dict, List, Optional, Any
+  |
+help: Split imports
+
+I001 [*] Import block is un-sorted or un-formatted
+ --> src/reproagent/legacy_quant/factor_db.py:1:1
+  |
+1 | / import json, sqlite3
+2 | | from pathlib import Path
+3 | | from typing import Dict, List, Optional, Any
+  | |____________________________________________^
+4 |
+5 |   _DB_PATH = Path(__file__).parent / "factor_library.db"
+  |
+help: Organize imports
+
+UP035 `typing.Dict` is deprecated, use `dict` instead
+ --> src/reproagent/legacy_quant/factor_db.py:3:1
+  |
+1 | import json, sqlite3
+2 | from pathlib import Path
+3 | from typing import Dict, List, Optional, Any
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4 |
+5 | _DB_PATH = Path(__file__).parent / "factor_library.db"
+  |
+
+UP035 `typing.List` is deprecated, use `list` instead
+ --> src/reproagent/legacy_quant/factor_db.py:3:1
+  |
+1 | import json, sqlite3
+2 | from pathlib import Path
+3 | from typing import Dict, List, Optional, Any
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4 |
+5 | _DB_PATH = Path(__file__).parent / "factor_library.db"
+  |
+
+UP045 [*] Use `X | None` for type annotations
+  --> src/reproagent/legacy_quant/factor_db.py:9:33
+   |
+ 8 | class FactorDB:
+ 9 |     def __init__(self, db_path: Optional[Path] = None):
+   |                                 ^^^^^^^^^^^^^^
+10 |         self.db_path = db_path or _DB_PATH
+11 |         self.conn = sqlite3.connect(str(self.db_path))
+   |
+help: Convert to `X | None`
+
+UP006 [*] Use `list` instead of `List` for type annotation
+  --> src/reproagent/legacy_quant/factor_db.py:36:32
+   |
+34 |                     ic_std: float, icir: float, ann_return: float,
+35 |                     max_drawdown: float, win_rate: float,
+36 |                     ic_series: List[float], pnl_series: List[float]) -> int:
+   |                                ^^^^
+37 |         cur = self.conn.execute(
+38 |             "INSERT OR REPLACE INTO factors (name,rank,ic_mean,rank_ic,ic_std,icir,ann_return,max_drawdown,win_rate) "
+   |
+help: Replace with `list`
+
+UP006 [*] Use `list` instead of `List` for type annotation
+  --> src/reproagent/legacy_quant/factor_db.py:36:57
+   |
+34 |                     ic_std: float, icir: float, ann_return: float,
+35 |                     max_drawdown: float, win_rate: float,
+36 |                     ic_series: List[float], pnl_series: List[float]) -> int:
+   |                                                         ^^^^
+37 |         cur = self.conn.execute(
+38 |             "INSERT OR REPLACE INTO factors (name,rank,ic_mean,rank_ic,ic_std,icir,ann_return,max_drawdown,win_rate) "
+   |
+help: Replace with `list`
+
+E501 Line too long (118 > 100)
+  --> src/reproagent/legacy_quant/factor_db.py:38:101
+   |
+36 |                     ic_series: List[float], pnl_series: List[float]) -> int:
+37 |         cur = self.conn.execute(
+38 |             "INSERT OR REPLACE INTO factors (name,rank,ic_mean,rank_ic,ic_std,icir,ann_return,max_drawdown,win_rate) "
+   |                                                                                                     ^^^^^^^^^^^^^^^^^^
+39 |             "VALUES (?,?,?,?,?,?,?,?,?)",
+40 |             (name, rank, ic_mean, rank_ic, ic_std, icir, ann_return, max_drawdown, win_rate))
+   |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+  --> src/reproagent/legacy_quant/factor_db.py:55:30
+   |
+53 |         return fid
+54 |
+55 |     def get_factors(self) -> List[Dict[str, Any]]:
+   |                              ^^^^
+56 |         rows = self.conn.execute("SELECT * FROM factors ORDER BY rank").fetchall()
+57 |         return [dict(r) for r in rows]
+   |
+help: Replace with `list`
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+  --> src/reproagent/legacy_quant/factor_db.py:55:35
+   |
+53 |         return fid
+54 |
+55 |     def get_factors(self) -> List[Dict[str, Any]]:
+   |                                   ^^^^
+56 |         rows = self.conn.execute("SELECT * FROM factors ORDER BY rank").fetchall()
+57 |         return [dict(r) for r in rows]
+   |
+help: Replace with `dict`
+
+E701 Multiple statements on one line (colon)
+  --> src/reproagent/legacy_quant/factor_db.py:63:20
+   |
+61 |             "SELECT ic_value,excess_value FROM factor_ts WHERE factor_id=? ORDER BY date_idx",
+62 |             (factor_id,)).fetchall()
+63 |         if not rows: return [], []
+   |                    ^
+64 |         return [r["ic_value"] for r in rows], [r["excess_value"] for r in rows]
+   |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+  --> src/reproagent/legacy_quant/factor_db.py:72:37
+   |
+70 |         self.conn.commit()
+71 |
+72 |     def get_deviation_logs(self) -> List[Dict[str, Any]]:
+   |                                     ^^^^
+73 |         rows = self.conn.execute("SELECT * FROM deviation_logs ORDER BY id").fetchall()
+74 |         result = []
+   |
+help: Replace with `list`
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+  --> src/reproagent/legacy_quant/factor_db.py:72:42
+   |
+70 |         self.conn.commit()
+71 |
+72 |     def get_deviation_logs(self) -> List[Dict[str, Any]]:
+   |                                          ^^^^
+73 |         rows = self.conn.execute("SELECT * FROM deviation_logs ORDER BY id").fetchall()
+74 |         result = []
+   |
+help: Replace with `dict`
+
+E702 Multiple statements on one line (semicolon)
+  --> src/reproagent/legacy_quant/factor_db.py:92:35
+   |
+90 |             ic = np.clip(ic, -0.35, 0.35).tolist()
+91 |             dr = np.array(ic) * 0.15 + rng.normal(0, 0.005, n)
+92 |             s = float(np.mean(ic)); st = float(np.std(ic))
+   |                                   ^
+93 |             cum = np.exp(np.cumsum(dr))
+94 |             running_max = np.maximum.accumulate(cum)
+   |
+
+E501 Line too long (112 > 100)
+  --> src/reproagent/legacy_quant/factor_db.py:96:101
+   |
+94 |             running_max = np.maximum.accumulate(cum)
+95 |             mdd = float(((cum - running_max) / running_max).min() * 100)
+96 |             self.save_factor(name, i + 1, s, float(np.corrcoef(ic, np.argsort(dr))[0, 1]) if len(ic) > 1 else 0,
+   |                                                                                                     ^^^^^^^^^^^^
+97 |                              st, s / st if st > 0 else 0,
+98 |                              round((np.exp(np.cumsum(dr))[-1] - 1) * 100, 2),
+   |
+
+E501 Line too long (110 > 100)
+   --> src/reproagent/legacy_quant/factor_db.py:100:98
+    |
+ 98 |                              round((np.exp(np.cumsum(dr))[-1] - 1) * 100, 2),
+ 99 |                              round(mdd, 2), round(float((dr > 0).mean() * 100), 2), ic, dr.tolist())
+100 |         self.save_deviation("C-001", "submit", "entity_merge", {"mode":"merge","src":"法人库","dst":"工程线"})
+    |                                                                                                     ^^^^^^^^^^
+101 |         self.save_deviation("C-002", "submit", "layout_reflection", {"mode":"layout","max_retries":2,"limit":4})
+102 |         self.save_deviation("C-003", "skip", "", {"reason":"not_reverse_pv"})
+    |
+
+E501 Line too long (112 > 100)
+   --> src/reproagent/legacy_quant/factor_db.py:101:101
+    |
+ 99 |                              round(mdd, 2), round(float((dr > 0).mean() * 100), 2), ic, dr.tolist())
+100 |         self.save_deviation("C-001", "submit", "entity_merge", {"mode":"merge","src":"法人库","dst":"工程线"})
+101 |         self.save_deviation("C-002", "submit", "layout_reflection", {"mode":"layout","max_retries":2,"limit":4})
+    |                                                                                                     ^^^^^^^^^^^^
+102 |         self.save_deviation("C-003", "skip", "", {"reason":"not_reverse_pv"})
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+ --> src/reproagent/legacy_quant/factor_library_dashboard.py:1:1
+  |
+1 | / import json
+2 | | from pathlib import Path
+3 | | from typing import Optional
+4 | | from .factor_db import FactorDB
+  | |_______________________________^
+  |
+help: Organize imports
+
+UP045 [*] Use `X | None` for type annotations
+ --> src/reproagent/legacy_quant/factor_library_dashboard.py:7:33
+  |
+7 | def generate_dashboard(db_path: Optional[Path] = None, output_path: Optional[Path] = None):
+  |                                 ^^^^^^^^^^^^^^
+8 |     db = FactorDB(db_path)
+9 |     db.seed_demo()
+  |
+help: Convert to `X | None`
+
+UP045 [*] Use `X | None` for type annotations
+ --> src/reproagent/legacy_quant/factor_library_dashboard.py:7:69
+  |
+7 | def generate_dashboard(db_path: Optional[Path] = None, output_path: Optional[Path] = None):
+  |                                                                     ^^^^^^^^^^^^^^
+8 |     db = FactorDB(db_path)
+9 |     db.seed_demo()
+  |
+help: Convert to `X | None`
+
+E501 Line too long (108 > 100)
+  --> src/reproagent/legacy_quant/factor_library_dashboard.py:39:101
+   |
+37 | * {{ margin:0; padding:0; box-sizing:border-box; }}
+38 | body {{
+39 |   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+   |                                                                                                     ^^^^^^^^
+40 |   background:#0b0e1a; color:#e8ecf4; min-height:100vh;
+41 | }}
+   |
+
+E501 Line too long (106 > 100)
+  --> src/reproagent/legacy_quant/factor_library_dashboard.py:88:101
+   |
+86 |   opacity:0; transition:.25s;
+87 | }}
+88 | .card:hover {{ transform:translateY(-4px); border-color:#3f539c; box-shadow:0 12px 32px rgba(0,0,0,.5); }}
+   |                                                                                                     ^^^^^^
+89 | .card:hover::before {{ opacity:1; }}
+90 | .card .name {{ font-size:16px; font-weight:600; margin-bottom:10px; }}
+   |
+
+E501 Line too long (101 > 100)
+  --> src/reproagent/legacy_quant/factor_library_dashboard.py:91:101
+   |
+89 | .card:hover::before {{ opacity:1; }}
+90 | .card .name {{ font-size:16px; font-weight:600; margin-bottom:10px; }}
+91 | .card .stat-row {{ display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px; }}
+   |                                                                                                     ^
+92 | .card .stat-row .label {{ color:#6b7599; }}
+93 | .card .stat-row .value {{ font-weight:600; }}
+   |
+
+E501 Line too long (125 > 100)
+  --> src/reproagent/legacy_quant/factor_library_dashboard.py:97:101
+   |
+95 | .card .value.red {{ color:#f87171; }}
+96 | .card .value.blue {{ color:#60a5fa; }}
+97 | .card .mini {{ font-size:11px; color:#4a5480; margin-top:8px; border-top:1px solid rgba(255,255,255,.04); padding-top:8px; }}
+   |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^
+98 | .modal-overlay {{
+99 |   display:none; position:fixed; inset:0; z-index:1000;
+   |
+
+E501 Line too long (127 > 100)
+   --> src/reproagent/legacy_quant/factor_library_dashboard.py:112:101
+    |
+110 |   animation:modalIn .3s ease;
+111 | }}
+112 | @keyframes modalIn {{ from{{opacity:0;transform:scale(.95)translateY(16px)}} to{{opacity:1;transform:scale(1)translateY(0)}} }}
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+113 | .modal-close {{
+114 |   position:absolute; top:16px; right:20px;
+    |
+
+E501 Line too long (145 > 100)
+   --> src/reproagent/legacy_quant/factor_library_dashboard.py:206:101
+    |
+204 | …
+205 | …
+206 | …pan class="value ${{icColor}}">${{s.ic > 0 ? '+' : ''}}${{s.ic.toFixed(4)}}</span></div>
+    |                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+207 | …<span class="value blue">${{s.icir.toFixed(2)}}</span></div>
+208 | …<span class="value ${{retColor}}">${{s.ann_return > 0 ? '+' : ''}}${{s.ann_return.toFixed(1)}}%</span></div>
+    |
+
+E501 Line too long (117 > 100)
+   --> src/reproagent/legacy_quant/factor_library_dashboard.py:207:101
+    |
+205 |     <div class="name">${{f.name}}</div>
+206 |     <div class="stat-row"><span class="label">IC</span><span class="value ${{icColor}}">${{s.ic > 0 ? '+' : ''}}${{s.ic.toFixed(4)}}<…
+207 |     <div class="stat-row"><span class="label">ICIR</span><span class="value blue">${{s.icir.toFixed(2)}}</span></div>
+    |                                                                                                     ^^^^^^^^^^^^^^^^^
+208 |     <div class="stat-row"><span class="label">年化收益</span><span class="value ${{retColor}}">${{s.ann_return > 0 ? '+' : ''}}${{s.an   …
+209 |     <div class="mini">回撤 ${{s.max_drawdown.toFixed(1)}}%  ·  胜率 ${{s.win_rate.toFixed(0)}}%</div>
+    |
+
+E501 Line too long (169 > 100)
+   --> src/reproagent/legacy_quant/factor_library_dashboard.py:208:97
+    |
+206 | …alue ${{icColor}}">${{s.ic > 0 ? '+' : ''}}${{s.ic.toFixed(4)}}</span></div>
+207 | …"value blue">${{s.icir.toFixed(2)}}</span></div>
+208 | …"value ${{retColor}}">${{s.ann_return > 0 ? '+' : ''}}${{s.ann_return.toFixed(1)}}%</span></div>
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+209 | …win_rate.toFixed(0)}}%</div>
+210 | …
+    |
+
+E501 Line too long (101 > 100)
+   --> src/reproagent/legacy_quant/factor_library_dashboard.py:209:97
+    |
+207 |     <div class="stat-row"><span class="label">ICIR</span><span class="value blue">${{s.icir.toFixed(2)}}</span></div>
+208 |     <div class="stat-row"><span class="label">年化收益</span><span class="value ${{retColor}}">${{s.ann_return > 0 ? '+' : ''}}${{s.an   …
+209 |     <div class="mini">回撤 ${{s.max_drawdown.toFixed(1)}}%  ·  胜率 ${{s.win_rate.toFixed(0)}}%</div>
+    |                                                                                                     ^
+210 |   </div>`;
+211 | }}
+    |
+
+E501 Line too long (101 > 100)
+   --> src/reproagent/legacy_quant/factor_library_dashboard.py:222:98
+    |
+220 |     if (show) visible++;
+221 |   }}
+222 |   document.getElementById('visibleCount').textContent = `显示 ${{visible}} / ${{FACTORS.length}} 个`;
+    |                                                                                                     ^
+223 | }}
+    |
+
+E501 Line too long (115 > 100)
+   --> src/reproagent/legacy_quant/factor_library_dashboard.py:231:97
+    |
+229 |   const s = f.stats;
+230 |   document.getElementById('modalName').textContent = f.name;
+231 |   document.getElementById('modalSubtitle').textContent = `因子库 @ DB  · 第 ${{idx + 1}} / ${{FACTORS.length}} 个`;
+    |                                                                                                     ^^^^^^^^^^^^^^^
+232 |   document.getElementById('modalKpis').innerHTML = `
+233 |     <div class="kpi"><div class="kpi-label">IC</div><div class="kpi-value ${{s.ic > 0 ? 'green' : 'red'}}">${{s.ic.toFixed(4)}}</div>…
+    |
+
+E501 Line too long (139 > 100)
+   --> src/reproagent/legacy_quant/factor_library_dashboard.py:233:101
+    |
+231 | … = `因子库 @ DB  · 第 ${{idx + 1}} / ${{FACTORS.length}} 个`;
+232 | …
+233 | …iv class="kpi-value ${{s.ic > 0 ? 'green' : 'red'}}">${{s.ic.toFixed(4)}}</div></div>
+    |                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+234 | …<div class="kpi-value blue">${{s.icir.toFixed(2)}}</div></div>
+235 | …<div class="kpi-value ${{s.ann_return > 0 ? 'green' : 'red'}}">${{s.ann_return.toFixed(1)}}%</div></div>
+    |
+
+E501 Line too long (116 > 100)
+   --> src/reproagent/legacy_quant/factor_library_dashboard.py:234:101
+    |
+232 |   document.getElementById('modalKpis').innerHTML = `
+233 |     <div class="kpi"><div class="kpi-label">IC</div><div class="kpi-value ${{s.ic > 0 ? 'green' : 'red'}}">${{s.ic.toFixed(4)}}</div>…
+234 |     <div class="kpi"><div class="kpi-label">ICIR</div><div class="kpi-value blue">${{s.icir.toFixed(2)}}</div></div>
+    |                                                                                                     ^^^^^^^^^^^^^^^^
+235 |     <div class="kpi"><div class="kpi-label">年化收益</div><div class="kpi-value ${{s.ann_return > 0 ? 'green' : 'red'}}">${{s.ann_retu   …
+236 |     <div class="kpi"><div class="kpi-label">最大回撤</div><div class="kpi-value red">${{s.max_drawdown.toFixed(1)}}%</div></div>
+    |
+
+E501 Line too long (162 > 100)
+   --> src/reproagent/legacy_quant/factor_library_dashboard.py:235:97
+    |
+233 | …pi-value ${{s.ic > 0 ? 'green' : 'red'}}">${{s.ic.toFixed(4)}}</div></div>
+234 | …"kpi-value blue">${{s.icir.toFixed(2)}}</div></div>
+235 | …"kpi-value ${{s.ann_return > 0 ? 'green' : 'red'}}">${{s.ann_return.toFixed(1)}}%</div></div>
+    |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+236 | …"kpi-value red">${{s.max_drawdown.toFixed(1)}}%</div></div>
+237 | …s="kpi-value blue">${{s.std.toFixed(4)}}</div></div>
+    |
+
+E501 Line too long (128 > 100)
+   --> src/reproagent/legacy_quant/factor_library_dashboard.py:236:97
+    |
+234 |     <div class="kpi"><div class="kpi-label">ICIR</div><div class="kpi-value blue">${{s.icir.toFixed(2)}}</div></div>
+235 |     <div class="kpi"><div class="kpi-label">年化收益</div><div class="kpi-value ${{s.ann_return > 0 ? 'green' : 'red'}}">${{s.ann_retu   …
+236 |     <div class="kpi"><div class="kpi-label">最大回撤</div><div class="kpi-value red">${{s.max_drawdown.toFixed(1)}}%</div></div>
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+237 |     <div class="kpi"><div class="kpi-label">IC 标准差</div><div class="kpi-value blue">${{s.std.toFixed(4)}}</div></div>
+238 |     <div class="kpi"><div class="kpi-label">胜率</div><div class="kpi-value green">${{s.win_rate.toFixed(0)}}%</div></div>`;
+    |
+
+E501 Line too long (120 > 100)
+   --> src/reproagent/legacy_quant/factor_library_dashboard.py:237:98
+    |
+235 |     <div class="kpi"><div class="kpi-label">年化收益</div><div class="kpi-value ${{s.ann_return > 0 ? 'green' : 'red'}}">${{s.ann_retu   …
+236 |     <div class="kpi"><div class="kpi-label">最大回撤</div><div class="kpi-value red">${{s.max_drawdown.toFixed(1)}}%</div></div>
+237 |     <div class="kpi"><div class="kpi-label">IC 标准差</div><div class="kpi-value blue">${{s.std.toFixed(4)}}</div></div>
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^
+238 |     <div class="kpi"><div class="kpi-label">胜率</div><div class="kpi-value green">${{s.win_rate.toFixed(0)}}%</div></div>`;
+239 |   Object.values(charts).forEach(c => c.destroy());
+    |
+
+E501 Line too long (124 > 100)
+   --> src/reproagent/legacy_quant/factor_library_dashboard.py:238:99
+    |
+236 |     <div class="kpi"><div class="kpi-label">最大回撤</div><div class="kpi-value red">${{s.max_drawdown.toFixed(1)}}%</div></div>
+237 |     <div class="kpi"><div class="kpi-label">IC 标准差</div><div class="kpi-value blue">${{s.std.toFixed(4)}}</div></div>
+238 |     <div class="kpi"><div class="kpi-label">胜率</div><div class="kpi-value green">${{s.win_rate.toFixed(0)}}%</div></div>`;
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^
+239 |   Object.values(charts).forEach(c => c.destroy());
+240 |   charts = {{}};
+    |
+
+E501 Line too long (188 > 100)
+   --> src/reproagent/legacy_quant/factor_library_dashboard.py:249:101
+    |
+247 | …
+248 | …
+249 | …(0,0,0,260); g.addColorStop(0,'rgba(91,124,250,.25)'); g.addColorStop(1,'rgba(91,124,250,.01)'); return g; }},
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+250 | …
+251 | …
+    |
+
+E501 Line too long (187 > 100)
+   --> src/reproagent/legacy_quant/factor_library_dashboard.py:266:101
+    |
+264 | …
+265 | …
+266 | …(0,0,0,260); g.addColorStop(0,'rgba(52,211,153,.2)'); g.addColorStop(1,'rgba(52,211,153,.01)'); return g; }},
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+267 | …
+268 | …
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+ --> src/reproagent/legacy_quant/factor_research_pipeline.py:1:1
+  |
+1 | / from __future__ import annotations
+2 | | from dataclasses import dataclass, field
+3 | | from typing import Any, Dict, List
+4 | | import numpy as np
+5 | | import pandas as pd
+6 | | from .factor_db import FactorDB
+  | |_______________________________^
+  |
+help: Organize imports
+
+UP035 `typing.Dict` is deprecated, use `dict` instead
+ --> src/reproagent/legacy_quant/factor_research_pipeline.py:3:1
+  |
+1 | from __future__ import annotations
+2 | from dataclasses import dataclass, field
+3 | from typing import Any, Dict, List
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4 | import numpy as np
+5 | import pandas as pd
+  |
+
+UP035 `typing.List` is deprecated, use `list` instead
+ --> src/reproagent/legacy_quant/factor_research_pipeline.py:3:1
+  |
+1 | from __future__ import annotations
+2 | from dataclasses import dataclass, field
+3 | from typing import Any, Dict, List
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4 | import numpy as np
+5 | import pandas as pd
+  |
+
+E702 Multiple statements on one line (semicolon)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:11:14
+   |
+ 9 | @dataclass
+10 | class FactorResult:
+11 |     name: str; ic: float; rank_ic: float; pnl: pd.Series; rank: int = 0
+   |              ^
+   |
+
+E702 Multiple statements on one line (semicolon)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:11:25
+   |
+ 9 | @dataclass
+10 | class FactorResult:
+11 |     name: str; ic: float; rank_ic: float; pnl: pd.Series; rank: int = 0
+   |                         ^
+   |
+
+E702 Multiple statements on one line (semicolon)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:11:41
+   |
+ 9 | @dataclass
+10 | class FactorResult:
+11 |     name: str; ic: float; rank_ic: float; pnl: pd.Series; rank: int = 0
+   |                                         ^
+   |
+
+E702 Multiple statements on one line (semicolon)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:11:57
+   |
+ 9 | @dataclass
+10 | class FactorResult:
+11 |     name: str; ic: float; rank_ic: float; pnl: pd.Series; rank: int = 0
+   |                                                         ^
+   |
+
+E501 Line too long (107 > 100)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:16:101
+   |
+14 | class PolarsEngine:
+15 |     def calc(self, data: pd.DataFrame, formula: str) -> pd.Series:
+16 |         return data[formula].astype(float) if formula in data.columns else pd.Series(0.0, index=data.index)
+   |                                                                                                     ^^^^^^^
+   |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:20:64
+   |
+19 | class RiceQuantEval:
+20 |     def evaluate(self, factor: pd.Series, price: pd.Series) -> Dict[str, float]:
+   |                                                                ^^^^
+21 |         ret = price.pct_change()
+22 |         aligned = pd.concat([factor.rename("f"), ret.rename("r")], axis=1).dropna()
+   |
+help: Replace with `dict`
+
+E701 Multiple statements on one line (colon)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:23:28
+   |
+21 |         ret = price.pct_change()
+22 |         aligned = pd.concat([factor.rename("f"), ret.rename("r")], axis=1).dropna()
+23 |         if len(aligned) < 2: return {"ic": 0.0, "rank_ic": 0.0}
+   |                            ^
+24 |         return {"ic": float(aligned["f"].corr(aligned["r"])),
+25 |                 "rank_ic": float(aligned["f"].rank().corr(aligned["r"].rank()))}
+   |
+
+E702 Multiple statements on one line (semicolon)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:33:45
+   |
+31 |         groups = pd.qcut(factor.rank(method="first"), n_groups, labels=False, duplicates="drop") + 1
+32 |         signal = pd.Series(0.0, index=price.index)
+33 |         signal[groups == groups.max()] = 1.0; signal[groups == groups.min()] = -1.0
+   |                                             ^
+34 |         return (signal * ret).fillna(0)
+   |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:38:60
+   |
+37 | class DeviationAnalyzer:
+38 |     def analyze(self, pnl: pd.Series, bench: pd.Series) -> Dict[str, float]:
+   |                                                            ^^^^
+39 |         diff = (pd.concat([pnl.rename("p"), bench.rename("b")], axis=1).fillna(0)["p"]
+40 |                 - pd.concat([pnl.rename("p"), bench.rename("b")], axis=1).fillna(0)["b"])
+   |
+help: Replace with `dict`
+
+UP006 [*] Use `list` instead of `List` for type annotation
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:58:34
+   |
+56 |         return data.iloc[:n].copy(), data.iloc[n:].copy()
+57 |
+58 |     def discover(self, formulas: List[str], data: pd.DataFrame, price_col: str = "close") -> List[FactorResult]:
+   |                                  ^^^^
+59 |         train, _ = self._prepare(data)
+60 |         results = []
+   |
+help: Replace with `list`
+
+UP006 [*] Use `list` instead of `List` for type annotation
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:58:94
+   |
+56 |         return data.iloc[:n].copy(), data.iloc[n:].copy()
+57 |
+58 |     def discover(self, formulas: List[str], data: pd.DataFrame, price_col: str = "close") -> List[FactorResult]:
+   |                                                                                              ^^^^
+59 |         train, _ = self._prepare(data)
+60 |         results = []
+   |
+help: Replace with `list`
+
+E501 Line too long (112 > 100)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:58:101
+   |
+56 |         return data.iloc[:n].copy(), data.iloc[n:].copy()
+57 |
+58 |     def discover(self, formulas: List[str], data: pd.DataFrame, price_col: str = "close") -> List[FactorResult]:
+   |                                                                                                     ^^^^^^^^^^^^
+59 |         train, _ = self._prepare(data)
+60 |         results = []
+   |
+
+E701 Multiple statements on one line (colon)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:67:42
+   |
+65 |                                         pnl=self.backtester.run(factor, train[price_col])))
+66 |         results.sort(key=lambda r: r.rank_ic, reverse=True)
+67 |         for i, r in enumerate(results, 1): r.rank = i
+   |                                          ^
+68 |         return results
+   |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:70:69
+   |
+68 |         return results
+69 |
+70 |     def deviation_report(self, pnl: pd.Series, bench: pd.Series) -> Dict[str, float]:
+   |                                                                     ^^^^
+71 |         return self.deviation.analyze(pnl, bench)
+   |
+help: Replace with `dict`
+
+E702 Multiple statements on one line (semicolon)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:76:17
+   |
+74 | @dataclass
+75 | class DeviationCase:
+76 |     case_id: str; is_reverse_pv: bool; category: str
+   |                 ^
+77 |     retry_count: int = 0; params: Dict[str, Any] = field(default_factory=dict)
+   |
+
+E702 Multiple statements on one line (semicolon)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:76:38
+   |
+74 | @dataclass
+75 | class DeviationCase:
+76 |     case_id: str; is_reverse_pv: bool; category: str
+   |                                      ^
+77 |     retry_count: int = 0; params: Dict[str, Any] = field(default_factory=dict)
+   |
+
+E702 Multiple statements on one line (semicolon)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:77:25
+   |
+75 | class DeviationCase:
+76 |     case_id: str; is_reverse_pv: bool; category: str
+77 |     retry_count: int = 0; params: Dict[str, Any] = field(default_factory=dict)
+   |                         ^
+   |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:77:35
+   |
+75 | class DeviationCase:
+76 |     case_id: str; is_reverse_pv: bool; category: str
+77 |     retry_count: int = 0; params: Dict[str, Any] = field(default_factory=dict)
+   |                                   ^^^^
+   |
+help: Replace with `dict`
+
+UP006 [*] Use `list` instead of `List` for type annotation
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:83:23
+   |
+81 |     def __init__(self, max_layout_retries: int = 2):
+82 |         self.max_layout_retries = max_layout_retries
+83 |         self.tickets: List[DeviationCase] = []
+   |                       ^^^^
+84 |
+85 |     def prepare_params(self, case: DeviationCase) -> Dict[str, Any]:
+   |
+help: Replace with `list`
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:85:54
+   |
+83 |         self.tickets: List[DeviationCase] = []
+84 |
+85 |     def prepare_params(self, case: DeviationCase) -> Dict[str, Any]:
+   |                                                      ^^^^
+86 |         if case.category == "entity_merge": return {"mode": "merge", "src": "法人库", "dst": "工程线"}
+87 |         if case.category == "layout_reflection": n = self.max_layout_retries; return {"mode": "layout", "max_retries": n, "limit": n +…
+   |
+help: Replace with `dict`
+
+E701 Multiple statements on one line (colon)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:86:43
+   |
+85 |     def prepare_params(self, case: DeviationCase) -> Dict[str, Any]:
+86 |         if case.category == "entity_merge": return {"mode": "merge", "src": "法人库", "dst": "工程线"}
+   |                                           ^
+87 |         if case.category == "layout_reflection": n = self.max_layout_retries; return {"mode": "layout", "max_retries": n, "limit": n +…
+88 |         return {"mode": "unknown"}
+   |
+
+E501 Line too long (102 > 100)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:86:95
+   |
+85 |     def prepare_params(self, case: DeviationCase) -> Dict[str, Any]:
+86 |         if case.category == "entity_merge": return {"mode": "merge", "src": "法人库", "dst": "工程线"}
+   |                                                                                                     ^^
+87 |         if case.category == "layout_reflection": n = self.max_layout_retries; return {"mode": "layout", "max_retries": n, "limit": n +…
+88 |         return {"mode": "unknown"}
+   |
+
+E701 Multiple statements on one line (colon)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:87:48
+   |
+85 |     def prepare_params(self, case: DeviationCase) -> Dict[str, Any]:
+86 |         if case.category == "entity_merge": return {"mode": "merge", "src": "法人库", "dst": "工程线"}
+87 |         if case.category == "layout_reflection": n = self.max_layout_retries; return {"mode": "layout", "max_retries": n, "limit": n +…
+   |                                                ^
+88 |         return {"mode": "unknown"}
+   |
+
+E702 Multiple statements on one line (semicolon)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:87:77
+   |
+85 |     def prepare_params(self, case: DeviationCase) -> Dict[str, Any]:
+86 |         if case.category == "entity_merge": return {"mode": "merge", "src": "法人库", "dst": "工程线"}
+87 |         if case.category == "layout_reflection": n = self.max_layout_retries; return {"mode": "layout", "max_retries": n, "limit": n +…
+   |                                                                             ^
+88 |         return {"mode": "unknown"}
+   |
+
+E501 Line too long (137 > 100)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:87:101
+   |
+85 | … Dict[str, Any]:
+86 | …"mode": "merge", "src": "法人库", "dst": "工程线"}
+87 | … self.max_layout_retries; return {"mode": "layout", "max_retries": n, "limit": n + 2}
+   |                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+88 | …
+   |
+
+E702 Multiple statements on one line (semicolon)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:91:48
+   |
+90 |     def submit(self, case: DeviationCase) -> DeviationCase:
+91 |         case.params = self.prepare_params(case); self.tickets.append(case); return case
+   |                                                ^
+   |
+
+E702 Multiple statements on one line (semicolon)
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:91:75
+   |
+90 |     def submit(self, case: DeviationCase) -> DeviationCase:
+91 |         case.params = self.prepare_params(case); self.tickets.append(case); return case
+   |                                                                           ^
+   |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:97:19
+   |
+95 |     def __init__(self, max_layout_retries: int = 2):
+96 |         self.manager = FactorErrorManager(max_layout_retries)
+97 |         self.log: List[Dict[str, Any]] = []
+   |                   ^^^^
+98 |
+99 |     def handle(self, case_id: str, is_reverse_pv: bool, category: str, retry_count: int = 0) -> Dict[str, Any]:
+   |
+help: Replace with `list`
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+  --> src/reproagent/legacy_quant/factor_research_pipeline.py:97:24
+   |
+95 |     def __init__(self, max_layout_retries: int = 2):
+96 |         self.manager = FactorErrorManager(max_layout_retries)
+97 |         self.log: List[Dict[str, Any]] = []
+   |                        ^^^^
+98 |
+99 |     def handle(self, case_id: str, is_reverse_pv: bool, category: str, retry_count: int = 0) -> Dict[str, Any]:
+   |
+help: Replace with `dict`
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:99:97
+    |
+ 97 |         self.log: List[Dict[str, Any]] = []
+ 98 |
+ 99 |     def handle(self, case_id: str, is_reverse_pv: bool, category: str, retry_count: int = 0) -> Dict[str, Any]:
+    |                                                                                                 ^^^^
+100 |         if not is_reverse_pv:
+101 |             entry = {"case_id": case_id, "action": "skip", "reason": "not_reverse_pv"}; self.log.append(entry); return entry
+    |
+help: Replace with `dict`
+
+E501 Line too long (111 > 100)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:99:101
+    |
+ 97 |         self.log: List[Dict[str, Any]] = []
+ 98 |
+ 99 |     def handle(self, case_id: str, is_reverse_pv: bool, category: str, retry_count: int = 0) -> Dict[str, Any]:
+    |                                                                                                     ^^^^^^^^^^^
+100 |         if not is_reverse_pv:
+101 |             entry = {"case_id": case_id, "action": "skip", "reason": "not_reverse_pv"}; self.log.append(entry); return entry
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:101:87
+    |
+ 99 |     def handle(self, case_id: str, is_reverse_pv: bool, category: str, retry_count: int = 0) -> Dict[str, Any]:
+100 |         if not is_reverse_pv:
+101 |             entry = {"case_id": case_id, "action": "skip", "reason": "not_reverse_pv"}; self.log.append(entry); return entry
+    |                                                                                       ^
+102 |         case = DeviationCase(case_id=case_id, is_reverse_pv=True, category=category, retry_count=retry_count)
+103 |         if category == "entity_merge":
+    |
+
+E501 Line too long (124 > 100)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:101:101
+    |
+ 99 |     def handle(self, case_id: str, is_reverse_pv: bool, category: str, retry_count: int = 0) -> Dict[str, Any]:
+100 |         if not is_reverse_pv:
+101 |             entry = {"case_id": case_id, "action": "skip", "reason": "not_reverse_pv"}; self.log.append(entry); return entry
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^
+102 |         case = DeviationCase(case_id=case_id, is_reverse_pv=True, category=category, retry_count=retry_count)
+103 |         if category == "entity_merge":
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:101:111
+    |
+ 99 |     def handle(self, case_id: str, is_reverse_pv: bool, category: str, retry_count: int = 0) -> Dict[str, Any]:
+100 |         if not is_reverse_pv:
+101 |             entry = {"case_id": case_id, "action": "skip", "reason": "not_reverse_pv"}; self.log.append(entry); return entry
+    |                                                                                                               ^
+102 |         case = DeviationCase(case_id=case_id, is_reverse_pv=True, category=category, retry_count=retry_count)
+103 |         if category == "entity_merge":
+    |
+
+E501 Line too long (109 > 100)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:102:101
+    |
+100 |         if not is_reverse_pv:
+101 |             entry = {"case_id": case_id, "action": "skip", "reason": "not_reverse_pv"}; self.log.append(entry); return entry
+102 |         case = DeviationCase(case_id=case_id, is_reverse_pv=True, category=category, retry_count=retry_count)
+    |                                                                                                     ^^^^^^^^^
+103 |         if category == "entity_merge":
+104 |             ticket = self.manager.submit(case)
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:107:92
+    |
+105 |         elif category == "layout_reflection":
+106 |             if retry_count > self.manager.max_layout_retries + 2:
+107 |                 entry = {"case_id": case_id, "action": "drop", "reason": "exceed_N_plus_2"}; self.log.append(entry); return entry
+    |                                                                                            ^
+108 |             ticket = self.manager.submit(case)
+109 |         else:
+    |
+
+E501 Line too long (129 > 100)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:107:101
+    |
+105 |         elif category == "layout_reflection":
+106 |             if retry_count > self.manager.max_layout_retries + 2:
+107 |                 entry = {"case_id": case_id, "action": "drop", "reason": "exceed_N_plus_2"}; self.log.append(entry); return entry
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+108 |             ticket = self.manager.submit(case)
+109 |         else:
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:107:116
+    |
+105 |         elif category == "layout_reflection":
+106 |             if retry_count > self.manager.max_layout_retries + 2:
+107 |                 entry = {"case_id": case_id, "action": "drop", "reason": "exceed_N_plus_2"}; self.log.append(entry); return entry
+    |                                                                                                                    ^
+108 |             ticket = self.manager.submit(case)
+109 |         else:
+    |
+
+E501 Line too long (139 > 100)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:110:101
+    |
+108 | …
+109 | …
+110 | …ror", "reason": f"unknown_category:{category}"}; self.log.append(entry); return entry
+    |                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+111 | …", "category": ticket.category, "params": ticket.params}
+112 | …
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:110:102
+    |
+108 | …         ticket = self.manager.submit(case)
+109 | …     else:
+110 | …         entry = {"case_id": case_id, "action": "error", "reason": f"unknown_category:{category}"}; self.log.append(entry); return e…
+    |                                                                                                    ^
+111 | …     entry = {"case_id": case_id, "action": "submit", "category": ticket.category, "params": ticket.params}
+112 | …     self.log.append(entry); return entry
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:110:126
+    |
+108 | …         ticket = self.manager.submit(case)
+109 | …     else:
+110 | …         entry = {"case_id": case_id, "action": "error", "reason": f"unknown_category:{category}"}; self.log.append(entry); return e…
+    |                                                                                                                            ^
+111 | …     entry = {"case_id": case_id, "action": "submit", "category": ticket.category, "params": ticket.params}
+112 | …     self.log.append(entry); return entry
+    |
+
+E501 Line too long (110 > 100)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:111:101
+    |
+109 | …     else:
+110 | …         entry = {"case_id": case_id, "action": "error", "reason": f"unknown_category:{category}"}; self.log.append(entry); return e…
+111 | …     entry = {"case_id": case_id, "action": "submit", "category": ticket.category, "params": ticket.params}
+    |                                                                                                   ^^^^^^^^^^
+112 | …     self.log.append(entry); return entry
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:112:31
+    |
+110 | …         entry = {"case_id": case_id, "action": "error", "reason": f"unknown_category:{category}"}; self.log.append(entry); return e…
+111 | …     entry = {"case_id": case_id, "action": "submit", "category": ticket.category, "params": ticket.params}
+112 | …     self.log.append(entry); return entry
+    |                             ^
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:116:23
+    |
+115 | if __name__ == "__main__":
+116 |     np.random.seed(42); n = 500
+    |                       ^
+117 |     data = pd.DataFrame({"x1": np.random.randn(n), "x2": np.random.randn(n),
+118 |                          "x3": np.random.randn(n), "close": 100 + np.cumsum(np.random.randn(n) * 0.5)})
+    |
+
+E501 Line too long (103 > 100)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:118:101
+    |
+116 |     np.random.seed(42); n = 500
+117 |     data = pd.DataFrame({"x1": np.random.randn(n), "x2": np.random.randn(n),
+118 |                          "x3": np.random.randn(n), "close": 100 + np.cumsum(np.random.randn(n) * 0.5)})
+    |                                                                                                     ^^^
+119 |     db = FactorDB()
+120 |     fd = FactorDiscoverer(build_evaluator=False)
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:123:44
+    |
+121 |     factors = fd.discover(["x1", "x2", "x3"], data)
+122 |     for f in factors:
+123 |         pnl_list = f.pnl.fillna(0).tolist(); ic_arr = np.array(pnl_list)
+    |                                            ^
+124 |         ic_std = float(ic_arr.std()) if len(ic_arr) > 1 else 0.0
+125 |         icir = f.ic / ic_std if ic_std > 0 else 0
+    |
+
+E501 Line too long (102 > 100)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:128:101
+    |
+126 |         exp_cum = np.exp(np.cumsum(pnl_list))
+127 |         ann = float((exp_cum[-1] - 1) * 100)
+128 |         mdd = float((np.minimum.accumulate(exp_cum) / np.maximum.accumulate(exp_cum) - 1).min() * 100)
+    |                                                                                                     ^^
+129 |         win = float((np.array(pnl_list) > 0).mean() * 100)
+130 |         ic_data = (np.random.randn(n) * 0.03 + f.ic).clip(-0.35, 0.35).tolist()
+    |
+
+E501 Line too long (103 > 100)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:131:101
+    |
+129 |         win = float((np.array(pnl_list) > 0).mean() * 100)
+130 |         ic_data = (np.random.randn(n) * 0.03 + f.ic).clip(-0.35, 0.35).tolist()
+131 |         db.save_factor(f.name, f.rank, f.ic, f.rank_ic, ic_std, icir, ann, mdd, win, ic_data, pnl_list)
+    |                                                                                                     ^^^
+132 |         print(f"  + {f.name} rank={f.rank} ic={f.ic:.4f} -> DB saved")
+133 |     ctrl = DeviationController(max_layout_retries=2)
+    |
+
+E501 Line too long (147 > 100)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:134:101
+    |
+132 | …> DB saved")
+133 | …
+134 | …erge", 0), ("C-002", True, "layout_reflection", 1), ("C-003", False, "entity_merge", 0)]:
+    |                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+135 | …iation(r.get("case_id", cid), r.get("action", "?"), r.get("category", ""), r.get("params", {}))
+136 | …
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:135:46
+    |
+133 |     ctrl = DeviationController(max_layout_retries=2)
+134 |     for cid, rev, cat, retry in [("C-001", True, "entity_merge", 0), ("C-002", True, "layout_reflection", 1), ("C-003", False, "entit…
+135 |         r = ctrl.handle(cid, rev, cat, retry); db.save_deviation(r.get("case_id", cid), r.get("action", "?"), r.get("category", ""), …
+    |                                              ^
+136 |         print(f"  + {cid} -> {r['action']} -> DB saved")
+137 |     db.close(); print(f"\n  DB: {db.db_path}")
+    |
+
+E501 Line too long (153 > 100)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:135:101
+    |
+133 | …
+134 | …e", 0), ("C-002", True, "layout_reflection", 1), ("C-003", False, "entity_merge", 0)]:
+135 | …ion(r.get("case_id", cid), r.get("action", "?"), r.get("category", ""), r.get("params", {}))
+    |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+136 | …
+137 | …
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src/reproagent/legacy_quant/factor_research_pipeline.py:137:15
+    |
+135 |         r = ctrl.handle(cid, rev, cat, retry); db.save_deviation(r.get("case_id", cid), r.get("action", "?"), r.get("category", ""), …
+136 |         print(f"  + {cid} -> {r['action']} -> DB saved")
+137 |     db.close(); print(f"\n  DB: {db.db_path}")
+    |               ^
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/reproagent/pipeline.py:14:5
+   |
+13 |   def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
+14 | /     import logging
+15 | |     import uuid
+16 | |     from datetime import UTC, datetime
+17 | |     
+18 | |     from reproagent.persistence.paths import AppPaths
+19 | |     from reproagent.persistence.repository import Repository
+20 | |     from reproagent.persistence.db import get_engine, init_db
+21 | |     from reproagent.ingestion.uploader import upload_pdf
+22 | |     from reproagent.ingestion.validator import validate_pdf
+23 | |     from reproagent.parser.report_parser import ReportParser
+24 | |     from reproagent.parser.config_builder import ConfigBuilder
+25 | |     from reproagent.parser.llm_extractor import LLMExtractor
+26 | |     from reproagent.reproducer.reproducer import FactorReproducer
+27 | |     from reproagent.reproducer.data_loader import DataLoader
+28 | |     from reproagent.deviation.analyzer import DeviationAnalyzer
+29 | |     from reproagent.deviation.reflection_loop import ReflectionLoopController
+30 | |     from reproagent.library.manager import FactorLibraryManager
+31 | |     from reproagent.models.deviation import ToleranceConfig
+32 | |     from reproagent.models.report import ReportedMetrics
+33 | |     from reproagent.models.library import FactorLibraryEntry
+   | |____________________________________________________________^
+34 |       
+35 |       logging.basicConfig(level=logging.INFO)
+   |
+help: Organize imports
+
+F401 [*] `reproagent.parser.config_builder.ConfigBuilder` imported but unused
+  --> src/reproagent/pipeline.py:24:50
+   |
+22 |     from reproagent.ingestion.validator import validate_pdf
+23 |     from reproagent.parser.report_parser import ReportParser
+24 |     from reproagent.parser.config_builder import ConfigBuilder
+   |                                                  ^^^^^^^^^^^^^
+25 |     from reproagent.parser.llm_extractor import LLMExtractor
+26 |     from reproagent.reproducer.reproducer import FactorReproducer
+   |
+help: Remove unused import: `reproagent.parser.config_builder.ConfigBuilder`
+
+F401 [*] `reproagent.parser.llm_extractor.LLMExtractor` imported but unused
+  --> src/reproagent/pipeline.py:25:49
+   |
+23 |     from reproagent.parser.report_parser import ReportParser
+24 |     from reproagent.parser.config_builder import ConfigBuilder
+25 |     from reproagent.parser.llm_extractor import LLMExtractor
+   |                                                 ^^^^^^^^^^^^
+26 |     from reproagent.reproducer.reproducer import FactorReproducer
+27 |     from reproagent.reproducer.data_loader import DataLoader
+   |
+help: Remove unused import: `reproagent.parser.llm_extractor.LLMExtractor`
+
+F841 Local variable `logger` is assigned to but never used
+  --> src/reproagent/pipeline.py:36:5
+   |
+35 |     logging.basicConfig(level=logging.INFO)
+36 |     logger = logging.getLogger(__name__)
+   |     ^^^^^^
+37 |     
+38 |     paths = AppPaths.from_settings(settings)
+   |
+help: Remove assignment to unused variable `logger`
+
+E501 Line too long (125 > 100)
+   --> src/reproagent/pipeline.py:111:101
+    |
+109 |             best_step = next((s for s in state.steps if s.id == state.best_step_id), None)
+110 |             if best_step:
+111 |                 factor_def, _ = reproducer.compute_factor(best_step.revised_config, best_step.revised_config.factor_specs[0])
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^
+112 |                 entry = FactorLibraryEntry(
+113 |                     id=uuid.uuid4().hex,
+    |
+
+E501 Line too long (132 > 100)
+   --> src/reproagent/pipeline.py:117:101
+    |
+115 |                     report_id=report.id,
+116 |                     config_id=best_step.revised_config.id,
+117 |                     backtest_result_id=best_step.deviation_report.comparison_id if best_step.deviation_report else uuid.uuid4().hex,
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+118 |                     deviation_passed=True,
+119 |                     version="0.1.0",
+    |
+
+E501 Line too long (103 > 100)
+  --> tests/integration/test_e2e.py:36:101
+   |
+36 | def test_e2e_offline_pipeline_mock_local(sample_report_path: Path, offline_settings: Settings) -> None:
+   |                                                                                                     ^^^
+37 |     report = upload_pdf(sample_report_path)
+38 |     report = validate_pdf(report)
+   |
+
+F401 [*] `pytest` imported but unused
+  --> tests/unit/test_metrics.py:9:8
+   |
+ 8 | import polars as pl
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | from reproagent.reproducer.metrics import (
+   |
+help: Remove unused import: `pytest`
+
+Found 158 errors.
+[*] 34 fixable with the `--fix` option (7 hidden fixes can be enabled with the `--unsafe-fixes` option).
+exit:1

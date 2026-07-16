@@ -1,0 +1,84 @@
+# F3 Real Manual QA - Final Wave
+
+Date: Fri Jul 17 2026
+Working dir: /home/wh/Documents/reproagent
+
+## Command 1: load_config
+```
+$ uv run python -c "from finreportparser.config import load_config; load_config()"
+EXIT=0
+```
+Result: PASS (no output, exit 0)
+
+## Command 2: reproduce (mock LLM, local data)
+```
+$ OPENAI_API_KEY= LLM_API_KEY= DATA_SOURCE=local LOCAL_DATA_PATH=tests/fixtures/test_data \
+    uv run reproagent reproduce tests/fixtures/sample_reports/minimal.pdf
+INFO:reproagent.parser.llm_extractor:No LLM API key provided, using mock extraction.
+INFO:reproagent.parser.llm_extractor:No LLM API key provided, using mock revision.
+INFO:reproagent.parser.llm_extractor:No LLM API key provided, using mock revision.
+INFO:reproagent.parser.llm_extractor:No LLM API key provided, using mock revision.
+reproduce ok
+{"status": "review_enqueued", "reflection_status": "exhausted"}
+EXIT=0
+```
+Result: PASS (exit 0; status=review_enqueued is acceptable per QA criteria)
+
+## Command 3: ingest
+```
+$ uv run reproagent ingest tests/fixtures/sample_reports/minimal.pdf
+ingest ok: id=d0bb565346d14c58bf3957a000a45983 hash=91b8691e8cf4… status=valid pages=2
+EXIT=0
+```
+Result: PASS
+
+## Command 4: library
+```
+$ uv run reproagent library
+library: empty (0 factors)
+EXIT=0
+```
+Result: PASS (empty library is valid state, exit 0)
+
+## Command 5: pytest
+```
+$ uv run pytest -q
+sss........................................................              [100%]
+56 passed, 3 skipped in 0.40s
+EXIT=0
+```
+Result: PASS (56 passed, 3 skipped, 0 failed, exit 0)
+
+## Command 6: FactorDB import
+```
+$ uv run python -c "from reproagent.legacy_quant.factor_db import FactorDB; print(FactorDB)"
+<class 'reproagent.legacy_quant.factor_db.FactorDB'>
+EXIT=0
+```
+Result: PASS
+
+## Command 7: ReproAgentApp import
+```
+$ uv run python -c "from reproagent.tui.app import ReproAgentApp; print(ReproAgentApp)"
+<class 'reproagent.tui.app.ReproAgentApp'>
+EXIT=0
+```
+Result: PASS
+
+## Summary
+
+| # | Command | Exit | Status |
+|---|---------|------|--------|
+| 1 | load_config | 0 | PASS |
+| 2 | reproduce (mock) | 0 | PASS (review_enqueued) |
+| 3 | ingest | 0 | PASS |
+| 4 | library | 0 | PASS |
+| 5 | pytest -q | 0 | PASS (56 passed, 3 skipped) |
+| 6 | FactorDB import | 0 | PASS |
+| 7 | ReproAgentApp import | 0 | PASS |
+
+All 7 commands succeeded with exit code 0. The `reproduce` command returned
+`review_enqueued` with `reflection_status: exhausted`, which is acceptable
+per the QA criteria (exit 0).
+
+## VERDICT: APPROVE

@@ -1,0 +1,7 @@
+INFO:reproagent.parser.llm_extractor:No LLM API key provided, using mock extraction.
+INFO:reproagent.parser.llm_extractor:No LLM API key provided, using mock revision.
+INFO:reproagent.parser.llm_extractor:No LLM API key provided, using mock revision.
+INFO:reproagent.parser.llm_extractor:No LLM API key provided, using mock revision.
+reproduce ok
+{"status": "review_enqueued", "reflection_status": "exhausted"}
+exit:0

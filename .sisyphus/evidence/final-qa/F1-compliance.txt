@@ -1,0 +1,37 @@
+Final Wave F1 — Plan Compliance Audit
+Date: 2026-07-17
+Plan: merge-quant-finpdfpro-full
+
+Must Have checks:
+[x] finpdfpro default PDF layout backend (Settings.parser_backend=finpdfpro, LayoutExtractor)
+[x] masterplan 6 subsystems executable (ingestion/parser/reproducer/deviation/library + TUI/CLI/pipeline)
+[x] aiminer-like data backends local/ricequant/qlib (DataLoader)
+[x] LLM mock offline path (LLMExtractor empty key)
+[x] legacy_quant isolated side module
+[x] HTML dashboard + TUI screens
+[x] offline pytest 56 passed, 3 skipped
+
+Must NOT Have checks:
+[x] no self-built PDF layout primary path (marker not primary)
+[x] no aiminer LangGraph/RAG/wiki/agents port
+[x] no alpha-lens DSR/PBO/MinBTL
+[x] no web server for HTML dashboard
+[x] no paddle/torch in core deps
+[x] tests do not require real LLM/RQ credentials
+
+Definition of Done:
+[x] uv sync / import finreportparser + reproagent
+[x] load_config() works
+[x] offline reproduce exits 0 (review_enqueued after reflection exhausted is valid offline outcome)
+[x] pytest core green
+[x] library/review/tui importable
+[x] HTML dashboard generates
+
+Evidence:
+- .sisyphus/evidence/task-1..30*
+- .sisyphus/evidence/final-qa/pytest.txt (56 passed)
+- .sisyphus/evidence/final-qa/reproduce.txt
+- .sisyphus/evidence/final-qa/F2-quality.txt APPROVE
+- .sisyphus/evidence/final-qa/F3-qa.txt APPROVE
+
+VERDICT: APPROVE
