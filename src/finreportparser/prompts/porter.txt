@@ -1,0 +1,7 @@
+TEMPLATE = """
+graph TD
+    A[Threat of New Entrants] --> B[Competitive Rivalry]
+    C[Bargaining Power of Suppliers] --> B
+    D[Bargaining Power of Buyers] --> B
+    E[Threat of Substitutes] --> B
+"""

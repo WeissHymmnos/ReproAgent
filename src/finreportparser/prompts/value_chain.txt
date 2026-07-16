@@ -1,0 +1,7 @@
+TEMPLATE = """
+graph TD
+    A[Inbound Logistics] --> B[Operations]
+    B --> C[Outbound Logistics]
+    C --> D[Marketing & Sales]
+    D --> E[Service]
+"""

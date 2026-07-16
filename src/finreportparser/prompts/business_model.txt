@@ -1,0 +1,7 @@
+TEMPLATE = """
+graph TD
+    A[Key Partners] --> B[Key Activities]
+    B --> C[Value Propositions]
+    C --> D[Customer Relationships]
+    D --> E[Customer Segments]
+"""

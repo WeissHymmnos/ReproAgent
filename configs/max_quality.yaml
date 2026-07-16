@@ -1,0 +1,12 @@
+mode: max-quality
+workers: 2
+table_backend: mineru
+vlm_backend: paddle_vl
+image_max_edge: 768
+resume: true
+out_dir: ./output
+sidecar: false
+cache_dir: null
+model_dir: ~/.cache/finreportparser/models
+cpu_threads: 4
+enable_hpi: false

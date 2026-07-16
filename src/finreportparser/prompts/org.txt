@@ -1,0 +1,6 @@
+TEMPLATE = """
+graph TD
+    A[CEO] --> B[CTO]
+    A --> C[CFO]
+    A --> D[COO]
+"""
