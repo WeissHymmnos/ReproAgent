@@ -12,10 +12,12 @@ class ReportTable(SQLModel, table=True):
     file_hash: str = Field(index=True)
     file_path: str
     title: str | None = None
+    author: str | None = None
     broker: str | None = None
     report_date: str | None = None
     page_count: int
     validation_status: str
+    validation_errors_json: str = "[]"
     ingested_at: str
 
 
