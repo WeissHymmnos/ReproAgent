@@ -1,0 +1,2 @@
+mock OK mock_momentum close / Ref(close, 20) - 1
+revise OK

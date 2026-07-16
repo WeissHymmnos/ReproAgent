@@ -1,0 +1,1 @@
+PolarsEngine.compute implemented to handle simple formulas and optional data injection.

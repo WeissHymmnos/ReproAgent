@@ -1,0 +1,5 @@
+LayoutExtractor implemented with finpdfpro backend.
+- Lazy imports finreportparser
+- Uses Settings for config
+- Converts DocumentResult to markdown
+- Handles CorruptPdfError

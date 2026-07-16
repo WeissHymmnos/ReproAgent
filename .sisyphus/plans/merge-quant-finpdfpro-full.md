@@ -681,7 +681,7 @@ except Exception as e:
 
   **Commit**: YES — `feat(ingestion): upload validate review queue`
 
-- [ ] 11. LayoutExtractor finpdfpro 适配
+- [x] 11. LayoutExtractor finpdfpro 适配
 
   **What to do**:
   - `LayoutExtractor(backend="finpdfpro")` 调用 `parse_pdf`
@@ -746,7 +746,7 @@ except Exception as e:
 
   **Commit**: YES — `feat(parser): finpdfpro layout extractor adapter`
 
-- [ ] 12. LLMExtractor + mock fallback
+- [x] 12. LLMExtractor + mock fallback
 
   **What to do**:
   - 实现 `extract` / `revise`：OpenAI structured / Anthropic tool-use + Pydantic schema
@@ -851,7 +851,7 @@ print(type(out), out)
 
   **Commit**: YES — `feat(parser): wire ReportParser orchestration`
 
-- [ ] 15. data_loader：local / ricequant / qlib（lazy）
+- [x] 15. data_loader：local / ricequant / qlib（lazy）
 
   **What to do**:
   - 实现 `DataLoader.load_price_data` / `load_fundamental_data`（基本面可最小 stub 或 local only）
@@ -915,7 +915,7 @@ except Exception as e:
 
   **Commit**: YES — `feat(reproducer): aiminer-like multi-backend data loader`
 
-- [ ] 16. polars_engine 因子计算
+- [x] 16. polars_engine 因子计算
 
   **What to do**:
   - 实现 `PolarsEngine.compute(FactorDefinition, data)`
@@ -952,7 +952,7 @@ print('engine', PolarsEngine)
 
   **Commit**: YES — `feat(reproducer): polars factor engine`
 
-- [ ] 17. metrics + StrategyBacktester
+- [x] 17. metrics + StrategyBacktester
 
   **What to do**:
   - `metrics`: IC, group returns, sharpe, max_drawdown, generate_charts
