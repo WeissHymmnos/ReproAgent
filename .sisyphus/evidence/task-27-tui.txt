@@ -1,0 +1,20 @@
+=== Task 27: TUI three screens — evidence ===
+Date: 2026-07-17T04:35:14+08:00
+
+## App construct (must-do)
+$ uv run python -c "from reproagent.tui.app import ReproAgentApp; print(type(ReproAgentApp()).__name__)"
+ReproAgentApp
+
+## Screens not pure TODO (plan QA scenario)
+screens ok
+
+## TUI compose smoke (run_test pilot)
+compose ok
+
+## Screen files summary
+--- src/reproagent/tui/screens/reproduction.py ---
+64 src/reproagent/tui/screens/reproduction.py
+--- src/reproagent/tui/screens/library_browser.py ---
+73 src/reproagent/tui/screens/library_browser.py
+--- src/reproagent/tui/screens/review.py ---
+85 src/reproagent/tui/screens/review.py

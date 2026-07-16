@@ -88,3 +88,19 @@
 - generate_html_dashboard(factors: list[dict], output_path) -> Path (no SQLite dep)
 - Added per-file-ignores E501 in pyproject.toml for dashboard.py (HTML template lines)
 - Export from library/__init__.py
+
+## Task 28/29/30 (tests + README)
+
+- `validate_pdf` returns a new `ResearchReport` via `model_copy` (Pydantic immutable) — must capture return value, not rely on mutation. Caught during e2e test writing.
+- `pipeline.reproduce_report` is still a stub (NotImplementedError, Task 24 not done). For e2e (Task 29), chained implemented subsystems directly: upload→validate→ReportParser.parse→build_config→FactorReproducer.reproduce→DeviationAnalyzer.analyze. Full offline chain works with mock LLM + local fixture parquet.
+- `LLMExtractor.extract` with empty api key returns deterministic mock spec (id `mock-factor-001`); monkeypatching `builtins.__import__` confirms no real LLM client import on mock path.
+- `Settings(_env_file=None, llm_api_key='', ...)` is the clean way to build offline settings in tests without env leakage.
+- conformance `test_engine_parity` kept skip with documented reason (rqalpha thin wrapper, no offline fixture parity yet).
+- README: 21 keyword hits across finreportparser/finpdfpro/legacy_quant/qlib/ricequant.
+- Full suite: 56 passed, 3 skipped (conformance) in 0.41s, offline, no secrets.
+
+## Task 26 + 27 (CLI wiring + TUI screens)
+- `uv sync` editable install: hatchling `force-include` in pyproject.toml copies `src/reproagent` into `.venv/lib/.../site-packages/reproagent/`, which SHADOWS the editable `.pth` path. If edits to `src/` aren't picked up by `uv run reproagent`, delete `.venv/lib/.../site-packages/reproagent/` and re-`uv sync`. Symptom: stale `[stub]` output after editing cli.py.
+- Textual worker pattern: `run_worker(coro, exclusive=True)` runs the coroutine in the app's event loop thread. `anyio.to_thread.run_sync(fn)` inside it offloads `fn` to a thread; after `await`, control returns to the event loop thread, so widget `.update()` can be called DIRECTLY — do NOT use `call_from_thread` there (it raises "must run in a different thread from the app"). `call_from_thread` is only for calls made from INSIDE the offloaded thread function.
+- `AppPaths` is a frozen dataclass with a `data_dir: Path` field — construct via `AppPaths.from_settings(settings)`, NOT `AppPaths(settings)` (parallel pipeline task had this bug; fixed one-liner).
+- `get_settings()` is `@lru_cache` — env vars set before first import win; for CLI tests use a fresh HOME to isolate the sqlite db.

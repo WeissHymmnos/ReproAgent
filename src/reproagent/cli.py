@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 import typer
 
 from reproagent import __version__
+from reproagent.settings import get_settings
 
 app = typer.Typer(
     name="reproagent",
@@ -35,38 +38,157 @@ def main(
     """ReproAgent CLI。"""
 
 
+def _build_repository() -> Any:
+    """构造一个默认 Repository（初始化 DB）。"""
+    from reproagent.persistence.db import get_engine, init_db
+    from reproagent.persistence.repository import Repository
+
+    settings = get_settings()
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    engine = get_engine(settings.db_path)
+    init_db(engine)
+    return Repository(engine)
+
+
+def _build_library_manager() -> Any:
+    """构造 FactorLibraryManager。"""
+    from reproagent.library.manager import FactorLibraryManager
+    from reproagent.persistence.paths import AppPaths
+
+    settings = get_settings()
+    repo = _build_repository()
+    paths = AppPaths.from_settings(settings)
+    paths.ensure_layout()
+    return FactorLibraryManager(repository=repo, paths=paths)
+
+
 @app.command()
 def ingest(pdf_path: Path = typer.Argument(..., exists=True, dir_okay=False)) -> None:
-    """摄入一篇研报。"""
-    # TODO: upload_pdf → validate_pdf → 持久化
-    typer.echo(f"[stub] ingest {pdf_path}")
-    raise typer.Exit(code=1)
+    """摄入一篇研报：upload → validate → 持久化。"""
+    from reproagent.ingestion.uploader import upload_pdf
+    from reproagent.ingestion.validator import validate_pdf
+
+    report = upload_pdf(pdf_path)
+    report = validate_pdf(report)
+
+    if report.validation_status == "invalid":
+        typer.echo(
+            f"ingest failed: validation_status=invalid errors={report.validation_errors}",
+            err=True,
+        )
+        # 仍持久化以便复核队列追踪
+        try:
+            repo = _build_repository()
+            repo.save_report(report)
+            from reproagent.ingestion.review_queue import enqueue_manual_review
+
+            enqueue_manual_review(report, "validation_failed", repo=repo)
+        except Exception as exc:  # noqa: BLE001
+            typer.echo(f"warn: could not enqueue review: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    repo = _build_repository()
+    repo.save_report(report)
+
+    typer.echo(
+        "ingest ok: "
+        f"id={report.id} hash={report.file_hash[:12]}… "
+        f"status={report.validation_status} pages={report.page_count}"
+    )
 
 
 @app.command()
 def reproduce(pdf_path: Path = typer.Argument(..., exists=True, dir_okay=False)) -> None:
     """端到端：摄入 → 解析 → 复现 → 偏差 → 入库。"""
-    # TODO: pipeline.reproduce_report(pdf_path, get_settings())
-    typer.echo(f"[stub] reproduce {pdf_path}")
-    raise typer.Exit(code=1)
+    try:
+        from reproagent.pipeline import reproduce_report
+    except ImportError as exc:
+        typer.echo(f"reproduce unavailable: pipeline import failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    settings = get_settings()
+    try:
+        result = reproduce_report(Path(pdf_path), settings)
+    except NotImplementedError as exc:
+        typer.echo(f"reproduce not implemented: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"reproduce failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo("reproduce ok")
+    if result is not None:
+        try:
+            typer.echo(json.dumps(result, default=str, ensure_ascii=False))
+        except Exception:  # noqa: BLE001
+            typer.echo(str(result))
 
 
 @app.command()
 def library(
     style: str | None = typer.Option(None, "--style", "-s", help="按风格过滤"),
+    html: bool = typer.Option(False, "--html", help="生成 HTML 仪表盘到 wiki_dir"),
 ) -> None:
     """浏览因子库。"""
-    # TODO: FactorLibraryManager.list(LibraryFilter(style=style))
-    typer.echo(f"[stub] library style={style!r}")
-    raise typer.Exit(code=1)
+    from reproagent.models.library import LibraryFilter
+
+    manager = _build_library_manager()
+    filter_ = LibraryFilter(style=style) if style else None
+    entries = manager.list(filter_)
+
+    if not entries:
+        typer.echo("library: empty (0 factors)")
+        if html:
+            typer.echo("--html requested but library empty; skipping dashboard")
+        return
+
+    typer.echo(f"library: {len(entries)} factor(s)")
+    typer.echo(f"{'id':<34} {'name':<24} {'style':<12} {'status':<10} {'version':<10}")
+    typer.echo("-" * 96)
+    for entry in entries:
+        typer.echo(
+            f"{entry.id:<34} {entry.factor.name:<24} {entry.factor.style:<12} "
+            f"{entry.status:<10} {entry.version:<10}"
+        )
+
+    if html:
+        from reproagent.library.dashboard import generate_html_dashboard
+
+        settings = get_settings()
+        out = settings.wiki_dir / "dashboard.html"
+        factors_payload = [
+            {
+                "name": entry.factor.name,
+                "ic_series": [],
+                "excess_cum": [],
+                "stats": {},
+            }
+            for entry in entries
+        ]
+        generate_html_dashboard(factors_payload, out)
+        typer.echo(f"html dashboard -> {out}")
 
 
 @app.command()
 def review() -> None:
-    """处理人工复核队列。"""
-    # TODO: dequeue_manual_review / confirm_manual_review
-    typer.echo("[stub] review")
-    raise typer.Exit(code=1)
+    """处理人工复核队列：取出队首项并打印。"""
+    from reproagent.ingestion.review_queue import dequeue_manual_review
+
+    item = dequeue_manual_review()
+    if item is None:
+        typer.echo("review: queue empty")
+        return
+
+    entry_id, report, reason = item
+    typer.echo(
+        "review: dequeued "
+        f"entry_id={entry_id} report_id={report.id} "
+        f"status={report.validation_status} reason={reason}"
+    )
+    typer.echo(f"  file_path={report.file_path}")
+    typer.echo(f"  file_hash={report.file_hash}")
+    if report.validation_errors:
+        typer.echo(f"  errors={report.validation_errors}")
 
 
 @app.command()

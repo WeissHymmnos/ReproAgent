@@ -1,0 +1,56 @@
+=== Task 26: CLI full wiring — evidence ===
+Date: 2026-07-17T04:35:04+08:00
+
+## reproagent --help
+                                                                                
+ Usage: reproagent [OPTIONS] COMMAND [ARGS]...                                  
+                                                                                
+ 研报因子复现系统                                                               
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --version             -V        显示版本号                                   │
+│ --install-completion            Install completion for the current shell.    │
+│ --show-completion               Show completion for the current shell, to    │
+│                                 copy it or customize the installation.       │
+│ --help                          Show this message and exit.                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────╮
+│ ingest     摄入一篇研报：upload → validate → 持久化。                        │
+│ reproduce  端到端：摄入 → 解析 → 复现 → 偏差 → 入库。                        │
+│ library    浏览因子库。                                                      │
+│ review     处理人工复核队列：取出队首项并打印。                              │
+│ tui        启动 TUI。                                                        │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+## ingest (fixture, OPENAI_API_KEY empty)
+$ OPENAI_API_KEY= uv run reproagent ingest tests/fixtures/sample_reports/minimal.pdf
+ingest ok: id=d3573b1f7495412c847a1953e87f458d hash=91b8691e8cf4… status=valid pages=2
+exit=0
+
+## reproduce (local data, mock LLM)
+$ OPENAI_API_KEY= LLM_API_KEY= DATA_SOURCE=local LOCAL_DATA_PATH=tests/fixtures/test_data uv run reproagent reproduce tests/fixtures/sample_reports/minimal.pdf
+INFO:reproagent.parser.llm_extractor:No LLM API key provided, using mock revision.
+INFO:reproagent.parser.llm_extractor:No LLM API key provided, using mock revision.
+INFO:reproagent.parser.llm_extractor:No LLM API key provided, using mock revision.
+reproduce ok
+{"status": "review_enqueued", "reflection_status": "exhausted"}
+exit=0
+
+## library
+$ uv run reproagent library
+library: empty (0 factors)
+exit=0
+
+## review (after reproduce enqueued a review item)
+$ uv run reproagent review
+review: dequeued entry_id=1abea025ac364eb3a200cf8e3a26f151 report_id=ed005bbbed9d440882c3170fc01f8312 status=valid reason=Reflection failed: exhausted
+  file_path=/home/wh/Documents/reproagent/tests/fixtures/sample_reports/minimal.pdf
+  file_hash=91b8691e8cf45bae4d8f46287f2063991c357a829a002a52ae7f7d5c7bbf3c52
+exit=0
+
+## library --html (optional dashboard)
+$ uv run reproagent library --html
+library: empty (0 factors)
+--html requested but library empty; skipping dashboard
+exit=0

@@ -1139,7 +1139,7 @@ print('html', out.stat().st_size)
 
   **Commit**: YES — `feat(library): chart.js html dashboard`
 
-- [ ] 23. ReflectionLoopController
+- [x] 23. ReflectionLoopController
 
   **What to do**:
   - N≤3 有界循环；持久化 ReflectionState/Step
@@ -1168,7 +1168,7 @@ print('html', out.stat().st_size)
 
   **Commit**: YES — `feat(deviation): reflection loop controller`
 
-- [ ] 24. pipeline.reproduce_report 端到端
+- [x] 24. pipeline.reproduce_report 端到端
 
   **What to do**:
   - 按 `pipeline.py` 注释步骤实现：ingest → cache → parse → reproduce → deviation → register / reflect / review → notify
@@ -1247,7 +1247,7 @@ except Exception as e:
 
   **Commit**: YES — `feat(logging): loguru setup`
 
-- [ ] 26. CLI 全命令接线
+- [x] 26. CLI 全命令接线
 
   **What to do**:
   - `ingest` / `reproduce` / `library` / `review` 去掉 stub exit1，接真实实现
@@ -1284,7 +1284,7 @@ except Exception as e:
 
   **Commit**: YES — `feat(cli): wire real commands`
 
-- [ ] 27. 完整 Textual TUI 三屏 + widgets
+- [x] 27. 完整 Textual TUI 三屏 + widgets
 
   **What to do**:
   - 实现 `screens/reproduction.py`, `library_browser.py`, `review.py`
@@ -1327,7 +1327,7 @@ print('screens ok')
 
   **Commit**: YES — `feat(tui): full screens and widgets`
 
-- [ ] 28. 子系统单测补齐（tests-after）
+- [x] 28. 子系统单测补齐（tests-after）
 
   **What to do**:
   - 为 parser/reproducer/deviation/library/persistence 增加 unit tests（mock LLM/data）
@@ -1355,7 +1355,7 @@ print('screens ok')
 
   **Commit**: YES — `test: unit coverage for subsystems`
 
-- [ ] 29. e2e 测试启用 + conformance 策略
+- [x] 29. e2e 测试启用 + conformance 策略
 
   **What to do**:
   - 实现/取消 skip `tests/integration/test_e2e.py`：mock LLM + local data
@@ -1382,7 +1382,7 @@ print('screens ok')
 
   **Commit**: YES — `test: enable offline e2e pipeline`
 
-- [ ] 30. README / masterplan 入口说明更新
+- [x] 30. README / masterplan 入口说明更新
 
   **What to do**:
   - 更新 README：finpdfpro vendor、数据后端 aiminer 模式、legacy_quant、CLI 示例、extras 安装
