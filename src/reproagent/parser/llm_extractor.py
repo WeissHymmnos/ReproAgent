@@ -62,7 +62,10 @@ class LLMExtractor:
         )
 
     def extract(self, report: ResearchReport, markdown: str) -> list[ParsedFactorSpec]:
-        """将研报 Markdown 发给 LLM，用 Pydantic schema 约束输出。"""
+        """将研报 Markdown 发给 LLM，用 Pydantic schema 约束输出。
+        
+        如果模型支持视觉（如 gpt-4o 或 claude-3-5-sonnet），将附加 PDF 的前几页截图。
+        """
         api_key = self.settings.llm_api_key.get_secret_value().strip()
         if not api_key:
             logger.info("No LLM API key provided, using mock extraction.")
@@ -72,25 +75,54 @@ class LLMExtractor:
             import instructor
             from anthropic import Anthropic
             from openai import OpenAI
+            from reproagent.utils.pdf import pdf_pages_to_base64
 
             prompt = EXTRACTION_PROMPT.render(markdown=markdown)
             
+            # 尝试提取前几页作为图像，供 Vision 模型使用
+            encoded_pages = []
+            if "vision" in self.settings.llm_model.lower() or "gpt-4o" in self.settings.llm_model.lower() or "claude-3-5-sonnet" in self.settings.llm_model.lower():
+                encoded_pages = pdf_pages_to_base64(report.file_path, max_pages=5)
+            
             if self.settings.llm_provider == "openai":
-                client = instructor.from_openai(OpenAI(api_key=api_key))
+                client = instructor.from_openai(OpenAI(
+                    api_key=api_key,
+                    base_url=self.settings.llm_base_url
+                ))
+                
+                content = [{"type": "text", "text": prompt}]
+                for encoded_page in encoded_pages:
+                    content.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{encoded_page}"}
+                    })
+                    
                 envelope = client.chat.completions.create(
                     model=self.settings.llm_model,
                     response_model=FactorExtractionEnvelope,
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=[{"role": "user", "content": content}],
                     temperature=self.settings.llm_temperature,
                     seed=self.settings.llm_seed,
                 )
             else:
                 client = instructor.from_anthropic(Anthropic(api_key=api_key))
+                
+                content = [{"type": "text", "text": prompt}]
+                for encoded_page in encoded_pages:
+                    content.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": encoded_page
+                        }
+                    })
+                
                 envelope = client.messages.create(
                     model=self.settings.llm_model,
                     response_model=FactorExtractionEnvelope,
                     max_tokens=4096,
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=[{"role": "user", "content": content}],
                     temperature=self.settings.llm_temperature,
                 )
             return envelope.factors
@@ -117,7 +149,10 @@ class LLMExtractor:
             from openai import OpenAI
 
             if self.settings.llm_provider == "openai":
-                client = instructor.from_openai(OpenAI(api_key=api_key))
+                client = instructor.from_openai(OpenAI(
+                    api_key=api_key,
+                    base_url=self.settings.llm_base_url
+                ))
                 revised = client.chat.completions.create(
                     model=self.settings.llm_model,
                     response_model=ParsedFactorSpec,

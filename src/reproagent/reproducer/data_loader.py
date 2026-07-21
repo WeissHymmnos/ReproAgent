@@ -31,7 +31,7 @@ class DataLoader:
         elif self.settings.data_source == "qlib":
             return self._load_qlib_price(universe, start, end)
         elif self.settings.data_source == "tushare":
-            raise ConfigurationError("tushare data source is not implemented yet.")
+            return self._load_tushare_price(universe, start, end)
         else:
             raise ConfigurationError(f"Unknown data source: {self.settings.data_source}")
 
@@ -173,4 +173,123 @@ class DataLoader:
         if not self.settings.qlib_data_path:
             raise ConfigurationError("qlib_data_path is not configured.")
 
-        raise ReproductionError("qlib data loading is not fully implemented yet.")
+        import qlib
+        from qlib.config import REG_CN
+        from qlib.data import D
+        
+        # Init Qlib
+        qlib.init(provider_uri=self.settings.qlib_data_path, region=REG_CN)
+        
+        if universe == "all":
+            instruments = "all"
+        elif isinstance(universe, str):
+            instruments = [universe]
+        else:
+            instruments = universe
+            
+        fields = ["$open", "$high", "$low", "$close", "$volume", "$amount"]
+        try:
+            df = D.features(instruments, fields, start_time=start.strftime("%Y-%m-%d"), end_time=end.strftime("%Y-%m-%d"))
+        except Exception as e:
+            raise ReproductionError(f"Qlib data fetch failed: {e}")
+            
+        if df is None or df.empty:
+            return pl.DataFrame(
+                schema={
+                    "trade_date": pl.Date,
+                    "ts_code": pl.Utf8,
+                    "open": pl.Float64,
+                    "high": pl.Float64,
+                    "low": pl.Float64,
+                    "close": pl.Float64,
+                    "volume": pl.Float64,
+                    "amount": pl.Float64,
+                }
+            )
+            
+        df = df.reset_index()
+        col_map = {
+            "datetime": "trade_date",
+            "instrument": "ts_code",
+            "$open": "open",
+            "$high": "high",
+            "$low": "low",
+            "$close": "close",
+            "$volume": "volume",
+            "$amount": "amount"
+        }
+        df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+        
+        pldf = pl.from_pandas(df)
+        if "trade_date" in pldf.columns and pldf.schema["trade_date"] == pl.Datetime:
+            pldf = pldf.with_columns(pl.col("trade_date").dt.date())
+            
+        return pldf
+
+    def _load_tushare_price(
+        self, universe: str | list[str], start: date, end: date
+    ) -> pl.DataFrame:
+        try:
+            import tushare as ts
+        except ImportError:
+            raise ConfigurationError("tushare is not installed. Please install it.")
+        
+        # tushare token
+        token = self.settings.tushare_token.get_secret_value() if self.settings.tushare_token else None
+        if not token:
+            raise ConfigurationError("tushare_token is not configured in settings.")
+            
+        ts.set_token(token)
+        pro = ts.pro_api()
+        
+        if isinstance(universe, str) and universe != "all":
+            universe = [universe]
+            
+        start_str = start.strftime("%Y%m%d")
+        end_str = end.strftime("%Y%m%d")
+        
+        dfs = []
+        try:
+            if universe == "all":
+                # download by trade dates (might be slow for many dates, but necessary for 'all')
+                cal = pro.trade_cal(exchange='SSE', start_date=start_str, end_date=end_str, is_open='1')
+                dates = cal['cal_date'].tolist()
+                for d in dates:
+                    df = pro.daily(trade_date=d)
+                    if not df.empty:
+                        dfs.append(df)
+            else:
+                # download by ts_code
+                for code in universe:
+                    df = pro.daily(ts_code=code, start_date=start_str, end_date=end_str)
+                    if not df.empty:
+                        dfs.append(df)
+        except Exception as e:
+            raise ReproductionError(f"Tushare data fetch failed: {e}")
+            
+        import pandas as pd
+        if not dfs:
+            return pl.DataFrame(
+                schema={
+                    "trade_date": pl.Date,
+                    "ts_code": pl.Utf8,
+                    "open": pl.Float64,
+                    "high": pl.Float64,
+                    "low": pl.Float64,
+                    "close": pl.Float64,
+                    "volume": pl.Float64,
+                    "amount": pl.Float64,
+                }
+            )
+        combined = pd.concat(dfs, ignore_index=True)
+        
+        pldf = pl.from_pandas(combined)
+        
+        if "trade_date" in pldf.columns:
+            pldf = pldf.with_columns(pl.col("trade_date").str.strptime(pl.Date, "%Y%m%d"))
+            
+        # rename vol -> volume if exists
+        if "vol" in pldf.columns and "volume" not in pldf.columns:
+            pldf = pldf.rename({"vol": "volume"})
+            
+        return pldf

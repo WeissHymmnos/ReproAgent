@@ -52,13 +52,28 @@ def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
         repository.enqueue_review(report.id, "PDF validation failed")
         return {"status": "invalid"}
         
-    # 2. Parse
+    from reproagent.cache.cache_manager import CacheManager
+    cache_manager = CacheManager(paths)
+    cache_key = report.file_hash
+    
+    # 2. Parse (with cache)
     parser = ReportParser(settings)
-    specs = parser.parse(report)
-    if not specs:
-        repository.enqueue_review(report.id, "No factors extracted")
-        return {"status": "no_factors"}
-    config = parser.build_config(specs, report)
+    cached_data = cache_manager.get_cached(cache_key)
+    if cached_data:
+        markdown, specs, config = cached_data
+        logger.info(f"Loaded parsing results from cache for {cache_key}")
+    else:
+        specs = parser.parse(report)
+        if not specs:
+            repository.enqueue_review(report.id, "No factors extracted")
+            return {"status": "no_factors"}
+        config = parser.build_config(specs, report)
+        cache_manager.save(
+            cache_key=cache_key,
+            markdown=parser.layout_extractor.extract(report) if hasattr(parser.layout_extractor, 'extract') else "",
+            specs=specs,
+            config=config
+        )
         
     # 3. Reproduce
     data_loader = DataLoader(settings)
@@ -84,12 +99,23 @@ def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
     spec = config.factor_specs[0]
     reported = spec.reported_metrics or ReportedMetrics()
     
-    result = reproducer.reproduce(config)
+    # Try to load backtest from cache
+    cached_bt = cache_manager.get_cached_backtest(cache_key, spec.factor_name)
+    if cached_bt:
+        result = cached_bt
+        logger.info(f"Loaded backtest result from cache for {spec.factor_name}")
+    else:
+        result = reproducer.reproduce(config)
+        # 存一份初始回测结果到缓存
+        if cached_data:
+            cache_manager.save(cache_key, markdown, specs, config, result)
+        
     deviation = analyzer.analyze(result, reported, tolerances)
     deviation.root_cause = analyzer.classify_root_cause(deviation, config)
     
     if deviation.passed:
         factor_def, _ = reproducer.compute_factor(config, spec)
+        # Compute real dedup hash
         entry = FactorLibraryEntry(
             id=uuid.uuid4().hex,
             factor=factor_def,
@@ -98,9 +124,10 @@ def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
             backtest_result_id=result.id,
             deviation_passed=True,
             version="0.1.0",
-            dedup_hash="",
+            dedup_hash="", # 稍后计算
             created_at=datetime.now(UTC),
         )
+        entry.dedup_hash = entry.compute_dedup_hash()
         library_manager.register(entry)
         return {"status": "passed", "factor_id": entry.id}
     else:
@@ -120,7 +147,18 @@ def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
                     dedup_hash="",
                     created_at=datetime.now(UTC),
                 )
+                entry.dedup_hash = entry.compute_dedup_hash()
                 library_manager.register(entry)
+                
+                # 更新缓存中收敛后的回测结果
+                # Note: To fully cache backtest result, we'd need to fetch or re-run it. 
+                # For now, we only update the config and specs.
+                cache_manager.save(
+                    cache_key,
+                    cached_data[0] if cached_data else "",
+                    best_step.revised_config.factor_specs,
+                    best_step.revised_config,
+                )
                 return {"status": "converged", "factor_id": entry.id}
         
         repository.enqueue_review(report.id, f"Reflection failed: {state.status}")
