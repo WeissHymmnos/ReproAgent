@@ -90,8 +90,47 @@ class StrategyBacktester:
         )
         
         ls_ret = long_ret.join(short_ret, on='date', how='inner').with_columns(
-            (pl.col('long_ret') - pl.col('short_ret')).alias('ls_return')
+            (pl.col('long_ret') - pl.col('short_ret')).alias('ls_return_raw')
         ).sort('date')
+        
+        # --- Turnover & Transaction Costs ---
+        # 1. 计算多空两端的权重
+        long_weights = grouped.filter(pl.col('group') == num_groups - 1).with_columns(
+            (pl.lit(1.0) / pl.len().over('date')).alias('weight')
+        )
+        short_weights = grouped.filter(pl.col('group') == 0).with_columns(
+            (pl.lit(-1.0) / pl.len().over('date')).alias('weight')
+        )
+        weights = pl.concat([
+            long_weights.select(['date', 'asset', 'weight']),
+            short_weights.select(['date', 'asset', 'weight'])
+        ])
+        
+        # 2. 计算调仓引发的权重变化 (w_t - w_{t-1})
+        # 为每个 date 找到前一个 trade_date
+        dates_df = weights.select('date').unique().sort('date').with_columns(
+            pl.col('date').shift(1).alias('prev_date')
+        )
+        w_t = weights
+        w_t_prev = weights.join(dates_df, left_on='date', right_on='prev_date').select([
+            pl.col('date_right').alias('date'), # this is the current date
+            'asset',
+            pl.col('weight').alias('prev_weight')
+        ])
+        
+        merged_w = w_t.join(w_t_prev, on=['date', 'asset'], how='full', coalesce=True).fill_null(0.0)
+        daily_turnover = merged_w.group_by('date').agg(
+            (pl.col('weight') - pl.col('prev_weight')).abs().sum().alias('turnover')
+        ).with_columns((pl.col('turnover') / 2.0).alias('turnover')) # 单边换手率
+        
+        avg_turnover = daily_turnover['turnover'].mean()
+        if avg_turnover is None: avg_turnover = 0.0
+        
+        # 3. 扣减交易成本
+        cost_rate = params.transaction_cost_bps / 10000.0
+        ls_ret = ls_ret.join(daily_turnover, on='date', how='left').fill_null(0.0).with_columns(
+            (pl.col('ls_return_raw') - pl.col('turnover') * cost_rate).alias('ls_return')
+        )
         
         ls_series = ls_ret['ls_return']
         
@@ -125,7 +164,7 @@ class StrategyBacktester:
             long_short_annual_return=ann_return,
             sharpe_ratio=sharpe,
             max_drawdown=mdd,
-            turnover=0.0,
+            turnover=avg_turnover,
             factor_values_path=factor_values_path,
             equity_curve_path=equity_curve_path,
             computed_at=datetime.now()

@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     # LLM
     llm_provider: Literal["openai", "anthropic"] = "anthropic"
     llm_api_key: SecretStr = Field(default=SecretStr(""))
+    llm_base_url: str | None = None
     llm_model: str = "claude-sonnet-4-5"
     llm_vision_model: str = "claude-sonnet-4-5"
     llm_temperature: float = 0.0
