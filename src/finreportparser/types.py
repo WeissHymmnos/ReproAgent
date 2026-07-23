@@ -1,10 +1,10 @@
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 
-class BlockType(str, Enum):
+class BlockType(StrEnum):
     TEXT = "text"
     TABLE = "table"
     IMAGE = "image"
@@ -15,22 +15,22 @@ class BlockType(str, Enum):
     HEADING = "heading"
     FORMULA = "formula"
 
-class QualityMode(str, Enum):
+class QualityMode(StrEnum):
     FAST = "fast"
     BALANCED = "balanced"
     MAX_QUALITY = "max-quality"
 
-class TableBackend(str, Enum):
+class TableBackend(StrEnum):
     PADDLE = "paddle"
     MINERU = "mineru"
 
-class VlmBackend(str, Enum):
+class VlmBackend(StrEnum):
     NONE = "none"
     PADDLE_VL = "paddle_vl"
     SMOLVLM = "smolvlm"
     LLAMACPP_HTTP = "llamacpp_http"
 
-class PageClass(str, Enum):
+class PageClass(StrEnum):
     BLANK = "blank"
     TEXT_RICH = "text_rich"
     SCANNED = "scanned"

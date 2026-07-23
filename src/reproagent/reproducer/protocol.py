@@ -22,6 +22,7 @@ class FactorEngine(Protocol):
         universe: str,
         start: date,
         end: date,
+        data: pl.DataFrame | None = None,
     ) -> pl.DataFrame:
         """返回 DataFrame：列 [date, asset, factor_value]，按 date, asset 排序。"""
         ...

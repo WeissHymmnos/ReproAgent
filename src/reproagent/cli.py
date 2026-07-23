@@ -76,7 +76,6 @@ def ingest(pdf_path: Path = typer.Argument(..., exists=True, dir_okay=False)) ->
             f"ingest failed: validation_status=invalid errors={report.validation_errors}",
             err=True,
         )
-        # 仍持久化以便复核队列追踪
         try:
             repo = _build_repository()
             repo.save_report(report)
@@ -107,11 +106,18 @@ def reproduce(pdf_path: Path = typer.Argument(..., exists=True, dir_okay=False))
         raise typer.Exit(code=1) from exc
 
     settings = get_settings()
+    if settings.is_prod and not settings.mock_llm_allowed:
+        key = settings.llm_api_key.get_secret_value().strip()
+        if not key:
+            typer.echo(
+                "reproduce failed: APP_ENV=prod requires LLM_API_KEY "
+                "(or set ALLOW_MOCK_LLM=true for offline).",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
     try:
         result = reproduce_report(Path(pdf_path), settings)
-    except NotImplementedError as exc:
-        typer.echo(f"reproduce not implemented: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"reproduce failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -170,18 +176,70 @@ def library(
 
 
 @app.command()
-def review() -> None:
-    """处理人工复核队列：取出队首项并打印。"""
-    from reproagent.ingestion.review_queue import dequeue_manual_review
+def review(
+    list_queue: bool = typer.Option(
+        False, "--list", "-l", help="仅列出待审项（不决策）"
+    ),
+    approve: str | None = typer.Option(
+        None, "--approve", help="批准复核条目 ID（entry_id）"
+    ),
+    reject: str | None = typer.Option(
+        None, "--reject", help="拒绝复核条目 ID（entry_id）"
+    ),
+) -> None:
+    """处理人工复核队列：查看 / approve / reject。"""
+    from sqlmodel import Session, select
 
-    item = dequeue_manual_review()
-    if item is None:
+    from reproagent.ingestion.review_queue import (
+        confirm_manual_review,
+        dequeue_manual_review,
+    )
+    from reproagent.persistence.tables import ManualReviewQueueTable
+
+    if approve and reject:
+        typer.echo("review: use only one of --approve / --reject", err=True)
+        raise typer.Exit(code=1)
+
+    repo = _build_repository()
+
+    if approve:
+        confirm_manual_review(approve, "approve", repo=repo)
+        typer.echo(f"review: approved entry_id={approve}")
+        return
+    if reject:
+        confirm_manual_review(reject, "reject", repo=repo)
+        typer.echo(f"review: rejected entry_id={reject}")
+        return
+
+    # 列出或 peek 队首
+    engine = repo.engine
+    with Session(engine) as session:
+        pending = session.exec(
+            select(ManualReviewQueueTable)
+            .where(ManualReviewQueueTable.status == "pending")
+            .order_by(ManualReviewQueueTable.created_at)
+        ).all()
+
+    if not pending:
         typer.echo("review: queue empty")
         return
 
+    typer.echo(f"review: {len(pending)} pending")
+    for row in pending if list_queue else pending[:1]:
+        typer.echo(
+            f"  entry_id={row.id} report_id={row.report_id} "
+            f"reason={row.reason} created_at={row.created_at}"
+        )
+
+    if list_queue:
+        return
+
+    item = dequeue_manual_review(repo=repo)
+    if item is None:
+        return
     entry_id, report, reason = item
     typer.echo(
-        "review: dequeued "
+        "review: head "
         f"entry_id={entry_id} report_id={report.id} "
         f"status={report.validation_status} reason={reason}"
     )
@@ -189,6 +247,10 @@ def review() -> None:
     typer.echo(f"  file_hash={report.file_hash}")
     if report.validation_errors:
         typer.echo(f"  errors={report.validation_errors}")
+    typer.echo(
+        "  decide: reproagent review --approve "
+        f"{entry_id}  |  reproagent review --reject {entry_id}"
+    )
 
 
 @app.command()

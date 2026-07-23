@@ -38,8 +38,9 @@ class ReflectionLoopController:
         reported: ReportedMetrics,
     ) -> ReflectionState:
         import uuid
-        import math
         from datetime import UTC, datetime
+
+        from reproagent.exceptions import PersistenceError
         from reproagent.models.reflection import ReflectionStep
 
         state = ReflectionState(
@@ -57,28 +58,37 @@ class ReflectionLoopController:
 
         current_config = initial_config
 
-        while state.current_iteration < state.max_iterations and state.status == "in_progress":
+        while (
+            state.current_iteration < state.max_iterations
+            and state.status == "in_progress"
+        ):
             result = self.reproducer.reproduce(current_config)
-            
+
             deviation = self.analyzer.analyze(result, reported, self.tolerances)
-            deviation.root_cause = self.analyzer.classify_root_cause(deviation, current_config)
-            
+            deviation.root_cause = self.analyzer.classify_root_cause(
+                deviation, current_config
+            )
+
             score = self._deviation_score(deviation)
-            
+
             if deviation.passed:
                 state.status = "converged"
-                
+
             step = ReflectionStep(
                 id=uuid.uuid4().hex,
                 state_id=state.id,
                 iteration=state.current_iteration,
-                prompt=self._build_reflection_prompt(state, deviation) if state.current_iteration > 0 else "",
+                prompt=(
+                    self._build_reflection_prompt(state, deviation)
+                    if state.current_iteration > 0
+                    else ""
+                ),
                 response="",
                 revised_config=current_config,
                 deviation_report=deviation,
                 created_at=datetime.now(UTC),
             )
-            
+
             if state.best_deviation_score is None or score < state.best_deviation_score:
                 state.best_deviation_score = score
                 state.best_step_id = step.id
@@ -93,35 +103,43 @@ class ReflectionLoopController:
                             break
                 if no_improvement_streak >= 1:
                     state.status = "escalated"
-            
+
             self.repository.save_reflection_step(step)
-            state = self.repository.get_reflection_state(state.id)
-            
+            reloaded = self.repository.get_reflection_state(state.id)
+            if reloaded is None:
+                raise PersistenceError(
+                    f"reflection state {state.id} disappeared after save_reflection_step"
+                )
+            state = reloaded
+
             if state.status in ("converged", "escalated"):
                 break
-                
+
             prompt = self._build_reflection_prompt(state, deviation)
-            revised_spec = self.llm_extractor.revise(prompt, current_config.factor_specs[0])
-            
+            revised_spec = self.llm_extractor.revise(
+                prompt, current_config.factor_specs[0]
+            )
+
             current_config = current_config.model_copy(deep=True)
             current_config.factor_specs = [revised_spec]
-            
+
             state.current_iteration += 1
             self.repository.save_reflection_state(state)
-            
+
         if state.status == "in_progress":
             state.status = "exhausted"
             self.repository.save_reflection_state(state)
-            
+
         return state
 
     def _deviation_score(self, deviation: DeviationReport) -> float:
         import math
+
         if deviation.passed:
             return 0.0
         if not deviation.metric_deviations:
             return 1.0
-            
+
         sum_sq = 0.0
         for k, v in deviation.metric_deviations.items():
             if k == "ic_mean":
@@ -130,7 +148,8 @@ class ReflectionLoopController:
                 tol = self.tolerances.ic_ir_abs
             elif k == "long_short_annual_return":
                 tol = self.tolerances.long_short_return_rel
-                if tol == 0: tol = 5.0
+                if tol == 0:
+                    tol = 5.0
             elif k == "sharpe_ratio":
                 tol = self.tolerances.sharpe_abs
             elif k == "max_drawdown":

@@ -52,6 +52,7 @@ def pdf_pages_to_base64(path: Path, max_pages: int = 10) -> list[str]:
     为了性能和上下文长度控制，默认最多只转换前 max_pages 页。
     """
     import base64
+
     import fitz  # PyMuPDF
     
     if not path.exists():

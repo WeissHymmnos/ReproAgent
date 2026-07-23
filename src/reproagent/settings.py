@@ -61,8 +61,31 @@ class Settings(BaseSettings):
     # 引擎默认
     default_engine: Literal["polars", "rqalpha"] = "polars"
 
+    # 运行环境：prod 下默认禁止 mock LLM 与公式静默降级
+    app_env: Literal["dev", "prod"] = "dev"
+    # None = 跟随 app_env（dev 允许 / prod 禁止）；显式 True/False 覆盖
+    allow_mock_llm: bool | None = None
+    allow_formula_fallback: bool | None = None
+
     # TUI
     tui_theme: str = "dark"
+
+    @property
+    def is_prod(self) -> bool:
+        return self.app_env == "prod"
+
+    @property
+    def mock_llm_allowed(self) -> bool:
+        if self.allow_mock_llm is not None:
+            return self.allow_mock_llm
+        return not self.is_prod
+
+    @property
+    def formula_fallback_allowed(self) -> bool:
+        """不可解析公式时是否静默退回 close（仅 dev 默认允许）。"""
+        if self.allow_formula_fallback is not None:
+            return self.allow_formula_fallback
+        return not self.is_prod
 
     @property
     def db_path(self) -> Path:

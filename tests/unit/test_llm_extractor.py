@@ -13,7 +13,7 @@ from reproagent.settings import Settings
 
 
 def _settings_no_key() -> Settings:
-    return Settings(_env_file=None, llm_api_key="")
+    return Settings(_env_file=None, app_env="dev", allow_mock_llm=True, llm_api_key="")
 
 
 def _report() -> ResearchReport:

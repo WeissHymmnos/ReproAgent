@@ -50,21 +50,47 @@ class FactorReproducer:
     ) -> tuple[FactorDefinition, pl.DataFrame]:
         """返回 (FactorDefinition, 因子值 DataFrame)。"""
         factor_def = self._build_factor_def(spec)
-        
+
         from reproagent.reproducer.evaluator_factory import build_evaluator
-        engine = build_evaluator(config)
-        
+
+        engine = build_evaluator(config, settings=self.settings)
+
         factor_values = engine.compute(
             factor_def=factor_def,
             universe=factor_def.universe,
             start=config.backtest_params.start_date,
             end=config.backtest_params.end_date,
+            data=self.data_loader.load_price_data(
+                factor_def.universe,
+                config.backtest_params.start_date,
+                config.backtest_params.end_date,
+            ),
         )
-        
+
         return factor_def, factor_values
 
     def _build_factor_def(self, spec: ParsedFactorSpec) -> FactorDefinition:
-        style = "momentum" if "mom" in spec.factor_name.lower() else "other"
+        from typing import Literal, cast
+
+        Style = Literal[
+            "value",
+            "growth",
+            "momentum",
+            "quality",
+            "size",
+            "volatility",
+            "liquidity",
+            "macro",
+            "technical",
+            "other",
+        ]
+        name_l = (spec.factor_name + " " + spec.factor_name_cn).lower()
+        if any(k in name_l for k in ("mom", "动量", "momentum")):
+            style = cast(Style, "momentum")
+        elif any(k in name_l for k in ("value", "估值", "pe", "pb")):
+            style = cast(Style, "value")
+        else:
+            style = cast(Style, "other")
         return FactorDefinition(
             id=spec.id,
             spec_id=spec.id,

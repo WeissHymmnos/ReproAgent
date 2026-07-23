@@ -14,5 +14,8 @@ def get_vlm(backend: str) -> BaseVLMProvider:
     elif backend == "smolvlm":
         from finreportparser.vlm.smolvlm import SmolVlmProvider
         return SmolVlmProvider()
+    elif backend == "unlimited-ocr":
+        from finreportparser.vlm.unlimited_ocr import UnlimitedOcrProvider
+        return UnlimitedOcrProvider()
     else:
         return NullVLM()

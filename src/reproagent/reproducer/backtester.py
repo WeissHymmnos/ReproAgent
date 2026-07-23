@@ -28,6 +28,7 @@ class StrategyBacktester:
         from datetime import datetime
         
         from reproagent.reproducer.metrics import (
+            _as_float,
             compute_group_returns,
             compute_ic,
             compute_max_drawdown,
@@ -56,14 +57,8 @@ class StrategyBacktester:
         ]).drop_nulls()
         
         ic_df = compute_ic(factor_values, forward_returns)
-        ic_mean = ic_df['ic'].mean() if len(ic_df) > 0 else 0.0
-        if ic_mean is None:
-            ic_mean = 0.0
-            
-        ic_std = ic_df['ic'].std() if len(ic_df) > 1 else 0.0
-        if ic_std is None:
-            ic_std = 0.0
-            
+        ic_mean = _as_float(ic_df["ic"].mean()) if len(ic_df) > 0 else 0.0
+        ic_std = _as_float(ic_df["ic"].std()) if len(ic_df) > 1 else 0.0
         ic_ir = ic_mean / ic_std if ic_std != 0 else 0.0
         
         num_groups = params.num_groups
@@ -118,39 +113,42 @@ class StrategyBacktester:
             pl.col('weight').alias('prev_weight')
         ])
         
-        merged_w = w_t.join(w_t_prev, on=['date', 'asset'], how='full', coalesce=True).fill_null(0.0)
+        merged_w = w_t.join(
+            w_t_prev, on=['date', 'asset'], how='full', coalesce=True
+        ).fill_null(0.0)
         daily_turnover = merged_w.group_by('date').agg(
             (pl.col('weight') - pl.col('prev_weight')).abs().sum().alias('turnover')
         ).with_columns((pl.col('turnover') / 2.0).alias('turnover')) # 单边换手率
         
-        avg_turnover = daily_turnover['turnover'].mean()
-        if avg_turnover is None: avg_turnover = 0.0
-        
+        avg_turnover = _as_float(daily_turnover["turnover"].mean())
+
         # 3. 扣减交易成本
         cost_rate = params.transaction_cost_bps / 10000.0
-        ls_ret = ls_ret.join(daily_turnover, on='date', how='left').fill_null(0.0).with_columns(
-            (pl.col('ls_return_raw') - pl.col('turnover') * cost_rate).alias('ls_return')
+        ls_ret = ls_ret.join(daily_turnover, on="date", how="left").fill_null(0.0).with_columns(
+            (pl.col("ls_return_raw") - pl.col("turnover") * cost_rate).alias("ls_return")
         )
-        
-        ls_series = ls_ret['ls_return']
-        
+
+        ls_series = ls_ret["ls_return"]
+
         sharpe = compute_sharpe(ls_series)
         equity_curve = (1 + ls_series).cum_prod()
         mdd = compute_max_drawdown(equity_curve)
-        ann_return = ls_series.mean() * 252 if len(ls_series) > 0 else 0.0
-        
+        ann_return = (
+            _as_float(ls_series.mean()) * 252 if len(ls_series) > 0 else 0.0
+        )
+
         output_dir = self.settings.data_dir / "backtest" / factor_def.id
         output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         factor_values_path = output_dir / "factor_values.parquet"
         factor_values.write_parquet(factor_values_path)
-        
+
         equity_curve_path = output_dir / "equity_curve.parquet"
         ls_ret.write_parquet(equity_curve_path)
-        
+
         ic_path = output_dir / "ic.parquet"
         ic_df.write_parquet(ic_path)
-        
+
         return BacktestResult(
             id=str(uuid.uuid4()),
             config_id="default",
@@ -160,12 +158,12 @@ class StrategyBacktester:
             end_date=params.end_date,
             group_annualized_returns=group_returns,
             ic_mean=ic_mean,
-            ic_ir=ic_ir,
+            ic_ir=float(ic_ir),
             long_short_annual_return=ann_return,
             sharpe_ratio=sharpe,
             max_drawdown=mdd,
             turnover=avg_turnover,
             factor_values_path=factor_values_path,
             equity_curve_path=equity_curve_path,
-            computed_at=datetime.now()
+            computed_at=datetime.now(),
         )

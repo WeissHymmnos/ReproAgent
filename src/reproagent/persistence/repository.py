@@ -177,14 +177,30 @@ class Repository:
     ) -> list[FactorLibraryEntry]:
         with Session(self.engine) as session:
             stmt = select(FactorLibraryTable)
-            if filter_ is not None:
-                if filter_.status is not None:
-                    stmt = stmt.where(FactorLibraryTable.status == filter_.status)
-                if filter_.tags:
-                    tags_json = json.dumps(filter_.tags, ensure_ascii=False)
-                    stmt = stmt.where(FactorLibraryTable.tags_json.contains(tags_json))
+            if filter_ is not None and filter_.status is not None:
+                stmt = stmt.where(FactorLibraryTable.status == filter_.status)
             rows = session.exec(stmt).all()
-            return [_to_library_entry(r) for r in rows]
+            entries = [_to_library_entry(r) for r in rows]
+
+        if filter_ is None:
+            return entries
+
+        if filter_.style is not None:
+            entries = [e for e in entries if e.factor.style == filter_.style]
+
+        if filter_.tags:
+            wanted = set(filter_.tags)
+            entries = [e for e in entries if wanted.issubset(set(e.tags))]
+
+        if filter_.broker is not None:
+            filtered: list[FactorLibraryEntry] = []
+            for e in entries:
+                report = self.get_report(e.report_id)
+                if report is not None and report.broker == filter_.broker:
+                    filtered.append(e)
+            entries = filtered
+
+        return entries
 
     def get_by_dedup_hash(self, dedup_hash: str) -> FactorLibraryEntry | None:
         with Session(self.engine) as session:

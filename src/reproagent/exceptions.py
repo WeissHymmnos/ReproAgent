@@ -39,3 +39,11 @@ class PersistenceError(ReproAgentError):
 
 class ConfigurationError(ReproAgentError):
     """配置缺失或非法。"""
+
+
+class LLMError(ParseError):
+    """LLM 提取 / 修订失败（含生产环境禁止 mock）。"""
+
+
+class FormulaError(ReproductionError):
+    """因子公式解析或求值失败。"""

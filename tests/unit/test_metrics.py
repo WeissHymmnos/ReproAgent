@@ -6,7 +6,6 @@ import math
 from datetime import date
 
 import polars as pl
-import pytest
 
 from reproagent.reproducer.metrics import (
     compute_group_returns,

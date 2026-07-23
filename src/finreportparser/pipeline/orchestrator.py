@@ -1,7 +1,12 @@
 import logging
 from pathlib import Path
 
-from finreportparser.batch.cache import PageCacheStore, canonical_mode_flags, compute_pdf_content_hash, page_cache_key
+from finreportparser.batch.cache import (
+    PageCacheStore,
+    canonical_mode_flags,
+    compute_pdf_content_hash,
+    page_cache_key,
+)
 from finreportparser.config import Config, load_config
 from finreportparser.extract.pdf_images import extract_page_images, render_full_page
 from finreportparser.extract.pdf_text import CorruptPdfError, extract_page_text, open_pdf
@@ -123,8 +128,13 @@ def parse_pdf(
 
             if decision.run_ocr:
                 try:
-                    from finreportparser.ocr.paddle_ocr import PaddleOcrEngine
-                    engine = PaddleOcrEngine(enable_hpi=config.enable_hpi)
+                    if getattr(config, 'ocr_backend', 'paddle') == "unlimited-ocr":
+                        from finreportparser.ocr.unlimited_ocr import UnlimitedOcrEngine
+                        engine = UnlimitedOcrEngine()
+                    else:
+                        from finreportparser.ocr.paddle_ocr import PaddleOcrEngine
+                        engine = PaddleOcrEngine(enable_hpi=config.enable_hpi)
+                    
                     try:
                         img_bytes = get_rendered_page()
                         lines = engine.predict(img_bytes)
@@ -134,11 +144,14 @@ def parse_pdf(
                 except ImportError as e:
                     if "not installed" not in str(e):
                         raise
-                    logger.warning("PaddleOCR not available, skipping OCR")
+                    logger.warning("OCR Engine not available, skipping OCR")
 
             if decision.run_structure:
                 try:
-                    if config.table_backend == "mineru":
+                    if config.table_backend == "unlimited-ocr":
+                        from finreportparser.ocr.unlimited_ocr import UnlimitedOcrTableExtractor
+                        extractor = UnlimitedOcrTableExtractor()
+                    elif config.table_backend == "mineru":
                         from finreportparser.ocr.mineru_backend import MinerUTableExtractor
                         extractor = MinerUTableExtractor()
                     else:
@@ -230,7 +243,9 @@ def parse_pdf(
                                 if vlm and not chart_meta.description.startswith("["):
                                     mermaid_candidates = vlm.diagram_to_mermaid_candidates(img_bytes)
                                     for code in mermaid_candidates:
-                                        from finreportparser.fusion.mermaid import mermaid_or_fallback
+                                        from finreportparser.fusion.mermaid import (
+                                            mermaid_or_fallback,
+                                        )
                                         valid_code, fallback = mermaid_or_fallback(
                                             code, "Failed to generate valid Mermaid diagram."
                                         )

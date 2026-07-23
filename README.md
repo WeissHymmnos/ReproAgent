@@ -11,11 +11,27 @@ PDF 布局解析由 vendored 的 [`finreportparser`](./src/finreportparser)（�
 - Python 3.12+
 - [uv](https://github.com/astral-sh/uv)（推荐）
 
+## 运行模式
+
+| `APP_ENV` | 行为 |
+|-----------|------|
+| `dev`（默认） | 无 `LLM_API_KEY` 时可用确定性 mock 因子；公式解析失败可降级 |
+| `prod` | **禁止** mock LLM；提取/修订失败直接报错；公式失败不静默退回 `close` |
+
+也可用 `ALLOW_MOCK_LLM` / `ALLOW_FORMULA_FALLBACK` 显式覆盖。  
+生产建议：
+
+```bash
+APP_ENV=prod
+LLM_API_KEY=sk-...
+uv sync --extra dev --extra instructor
+```
+
 ## 安装
 
 ```bash
 uv sync --extra dev
-cp .env.example .env   # 填入 LLM_API_KEY 等（离线 mock 可留空）
+cp .env.example .env   # 填入 LLM_API_KEY 等（离线 mock 可留空；prod 必须配置）
 ```
 
 可选 extras：
@@ -27,6 +43,7 @@ cp .env.example .env   # 填入 LLM_API_KEY 等（离线 mock 可留空）
 | `rqalpha` | rqalpha 评估引擎薄封装 |
 | `instructor` | LLM 结构化提取（OpenAI / Anthropic） |
 | `pdf-vision` | PDF 视觉处理（`pdf2image`） |
+| `tushare` | tushare 数据后端 |
 | `paddle` | PaddleOCR（finreportparser VLM 可选） |
 | `vlm` | 本地 VLM 后端（`transformers` + `torch`） |
 | `formula` | 公式 OCR（`pix2text`） |
@@ -60,7 +77,7 @@ uv run python -c "from finreportparser.config import load_config; print(load_con
 | `local` | 读取本地 parquet/csv（默认，离线可跑） | `LOCAL_DATA_PATH` 指向含 `prices.parquet` 的目录 |
 | `ricequant` | 米筐商业数据（lazy import `rqdatac`） | `RQ_TOKEN` / `RQ_USER` + `RQ_PASS`，需 `--extra ricequant` |
 | `qlib` | qlib 数据（lazy import） | `QLIB_CN_DATA_PATH`，需自行安装 `pyqlib` |
-| `tushare` | tushare（暂未实现） | `TUSHARE_TOKEN` |
+| `tushare` | tushare | `TUSHARE_TOKEN`，需 `--extra tushare` |
 
 离线测试默认使用 `local` + `tests/fixtures/test_data/prices.parquet`。
 
@@ -81,7 +98,10 @@ reproagent ingest path/to/report.pdf
 reproagent reproduce path/to/report.pdf
 reproagent library                 # 列出因子库
 reproagent library --html          # 生成 HTML 仪表盘到 ~/.reproagent/wiki/
-reproagent review                  # 处理人工复核队列
+reproagent review --list           # 列出待审项
+reproagent review                  # 查看队首 + 决策提示
+reproagent review --approve <id>   # 批准
+reproagent review --reject <id>    # 拒绝
 reproagent tui                     # 启动 Textual TUI
 ```
 

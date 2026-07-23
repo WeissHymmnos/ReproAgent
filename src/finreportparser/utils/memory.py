@@ -112,12 +112,6 @@ def enforce_memory_matrix(
 
 
 def force_gc() -> None:
-    try:
-        import paddle
-        if hasattr(paddle, "device") and hasattr(paddle.device, "cuda") and hasattr(paddle.device.cuda, "empty_cache"):
-            paddle.device.cuda.empty_cache()
-    except ImportError:
-        pass
     gc.collect()
 
 def release_page_resources(*objs) -> None:

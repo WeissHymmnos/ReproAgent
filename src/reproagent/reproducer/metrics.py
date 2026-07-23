@@ -3,10 +3,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 
 from reproagent.models.backtest import BacktestResult
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    """Coerce polars scalar aggregates to float for typing and safety."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def compute_ic(
@@ -39,10 +50,14 @@ def compute_group_returns(
 
 def compute_sharpe(returns: pl.Series, freq: str = "daily") -> float:
     """夏普比率；日频年化因子 √252。"""
-    if len(returns) == 0 or returns.std() == 0:
+    if len(returns) == 0:
         return 0.0
-    ann_factor = 252 ** 0.5 if freq == "daily" else 1.0
-    return (returns.mean() / returns.std()) * ann_factor
+    std = _as_float(returns.std())
+    mean = _as_float(returns.mean())
+    if std == 0.0:
+        return 0.0
+    ann_factor = 252**0.5 if freq == "daily" else 1.0
+    return (mean / std) * ann_factor
 
 
 def compute_max_drawdown(equity_curve: pl.Series) -> float:
@@ -51,7 +66,7 @@ def compute_max_drawdown(equity_curve: pl.Series) -> float:
         return 0.0
     cum_max = equity_curve.cum_max()
     drawdown = (equity_curve - cum_max) / cum_max
-    return abs(drawdown.min())
+    return abs(_as_float(drawdown.min()))
 
 
 def generate_charts(

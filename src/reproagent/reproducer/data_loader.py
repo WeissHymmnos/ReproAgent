@@ -180,18 +180,24 @@ class DataLoader:
         # Init Qlib
         qlib.init(provider_uri=self.settings.qlib_data_path, region=REG_CN)
         
+        instruments: str | list[str]
         if universe == "all":
             instruments = "all"
         elif isinstance(universe, str):
             instruments = [universe]
         else:
             instruments = universe
-            
+
         fields = ["$open", "$high", "$low", "$close", "$volume", "$amount"]
         try:
-            df = D.features(instruments, fields, start_time=start.strftime("%Y-%m-%d"), end_time=end.strftime("%Y-%m-%d"))
+            df = D.features(
+                instruments,
+                fields,
+                start_time=start.strftime("%Y-%m-%d"),
+                end_time=end.strftime("%Y-%m-%d"),
+            )
         except Exception as e:
-            raise ReproductionError(f"Qlib data fetch failed: {e}")
+            raise ReproductionError(f"Qlib data fetch failed: {e}") from e
             
         if df is None or df.empty:
             return pl.DataFrame(
@@ -235,7 +241,11 @@ class DataLoader:
             raise ConfigurationError("tushare is not installed. Please install it.")
         
         # tushare token
-        token = self.settings.tushare_token.get_secret_value() if self.settings.tushare_token else None
+        token = (
+            self.settings.tushare_token.get_secret_value()
+            if self.settings.tushare_token
+            else None
+        )
         if not token:
             raise ConfigurationError("tushare_token is not configured in settings.")
             
@@ -252,7 +262,12 @@ class DataLoader:
         try:
             if universe == "all":
                 # download by trade dates (might be slow for many dates, but necessary for 'all')
-                cal = pro.trade_cal(exchange='SSE', start_date=start_str, end_date=end_str, is_open='1')
+                cal = pro.trade_cal(
+                    exchange='SSE',
+                    start_date=start_str,
+                    end_date=end_str,
+                    is_open='1',
+                )
                 dates = cal['cal_date'].tolist()
                 for d in dates:
                     df = pro.daily(trade_date=d)
