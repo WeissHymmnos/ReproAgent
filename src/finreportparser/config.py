@@ -9,8 +9,9 @@ from pydantic import BaseModel, Field, field_validator
 class Config(BaseModel):
     mode: Literal["fast", "balanced", "max-quality"]
     workers: int = Field(default=2, ge=1)
-    table_backend: Literal["paddle", "mineru"]
-    vlm_backend: Literal["none", "paddle_vl", "smolvlm", "llamacpp_http"]
+    ocr_backend: Literal["paddle", "unlimited-ocr"] = "paddle"
+    table_backend: Literal["paddle", "mineru", "unlimited-ocr"]
+    vlm_backend: Literal["none", "paddle_vl", "smolvlm", "llamacpp_http", "unlimited-ocr"]
     formula_backend: Literal["none", "l1", "pix2text", "auto"] = "auto"
     image_max_edge: int = Field(default=768, ge=512, le=768)
     resume: bool = True

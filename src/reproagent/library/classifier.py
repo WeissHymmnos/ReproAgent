@@ -4,9 +4,27 @@ from __future__ import annotations
 
 from reproagent.models.factor_def import FactorDefinition
 
+_VALID_STYLES = frozenset(
+    {
+        "value",
+        "growth",
+        "momentum",
+        "quality",
+        "size",
+        "volatility",
+        "liquidity",
+        "macro",
+        "technical",
+        "other",
+    }
+)
+
 
 class StyleClassifier:
-    """规则优先 + LLM fallback。"""
+    """规则优先 + LLM fallback。
+
+    若因子已有明确非 other 风格，默认保留，避免入库时被规则误覆盖。
+    """
 
     RULES: dict[str, list[str]] = {
         "momentum": ["动量", "momentum", "ret", "return", "涨跌"],
@@ -18,8 +36,19 @@ class StyleClassifier:
         "growth": ["成长", "growth", "增长", "YoY"],
     }
 
-    def classify(self, factor: FactorDefinition) -> str:
-        """返回 style 字符串（与 FactorDefinition.style 对齐）。"""
+    def classify(self, factor: FactorDefinition, *, force: bool = False) -> str:
+        """返回 style 字符串（与 FactorDefinition.style 对齐）。
+
+        force=True 时忽略已有 style，强制重分类。
+        """
+        if (
+            not force
+            and factor.style
+            and factor.style != "other"
+            and factor.style in _VALID_STYLES
+        ):
+            return factor.style
+
         text = (factor.name + " " + factor.name_cn + " " + factor.formula).lower()
         for style, keywords in self.RULES.items():
             for kw in keywords:

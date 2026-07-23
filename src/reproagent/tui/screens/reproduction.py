@@ -48,21 +48,20 @@ class ReportReproductionScreen(Vertical):
         
         raw = (input_widget.value or "").strip()
         if not raw:
-            # 默认使用测试文件，提升体验
-            raw = "~/Documents/KnowledgeBase/Quant/WH/华泰系列研报/华泰因子系列/估值因子/华泰多因子系列2：单因子测试之估值类因子.pdf"
-            log.write(f"[bold yellow]未输入路径，默认使用测试文件:[/] {raw}")
-            
+            log.write("[bold red]请输入 PDF 路径。[/]")
+            return
+
         pdf_path = Path(raw).expanduser()
         if not pdf_path.exists():
             log.write(f"[bold red]路径不存在:[/] {pdf_path}")
             return
-            
+
         log.clear()
         log.write(f"[bold green]开始复现:[/] {pdf_path.name}")
-        
+
         gauge_container.styles.display = "block"
         gauge.progress = 0
-        
+
         self.run_worker(self._reproduce_task(pdf_path), exclusive=True)
 
     async def _reproduce_task(self, pdf_path: Path) -> None:
@@ -98,16 +97,25 @@ class ReportReproductionScreen(Vertical):
             return
             
         # 根据结果调整进度条
-        if outcome and outcome.get("status") == "success":
+        status = (outcome or {}).get("status")
+        if status in ("passed", "converged", "success"):
             gauge.update(progress=100)
-            log.write("[bold green]✓ 复现成功！逼真度极高，因子已自动入库。[/]")
-        elif outcome and outcome.get("status") == "review_enqueued":
-            gauge.update(progress=45) # 进度条停在一半，表示偏差大
-            log.write("[bold yellow]⚠ 复现完毕，但指标偏差过大，已触发多次 Reflection Loop 尝试修复。[/]")
-            log.write("[bold yellow]⚠ Reflection Exhausted. 因子已被安全送入人工复核队列 (Review Queue)。[/]")
+            log.write("[bold green]✓ 复现成功，因子已自动入库。[/]")
+        elif status == "review_enqueued":
+            gauge.update(progress=45)
+            log.write(
+                "[bold yellow]⚠ 复现完毕，但指标偏差过大，"
+                "已触发 Reflection Loop 尝试修复。[/]"
+            )
+            log.write(
+                "[bold yellow]⚠ Reflection 未收敛，因子已送入人工复核队列。[/]"
+            )
         else:
             gauge.update(progress=100)
-            log.write("复现完成 ✓")
-            
+            log.write(f"复现完成 ✓（status={status}）")
+
         if outcome:
-            log.write(f"\n[dim]Pipeline 返回详情: {json.dumps(outcome, ensure_ascii=False)}[/]")
+            log.write(
+                f"\n[dim]Pipeline 返回详情: "
+                f"{json.dumps(outcome, ensure_ascii=False)}[/]"
+            )

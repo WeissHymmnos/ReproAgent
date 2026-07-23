@@ -15,6 +15,7 @@ dependencies = [
     "typer>=0.12",
     "rich>=13.0",
     "textual>=0.50",
+    "anyio>=4.0",
     "pypdf>=4.0",
     "openai>=1.40",
     "anthropic>=0.30",
@@ -32,12 +33,15 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.5",
     "mypy>=1.10",
+    "types-PyYAML>=6.0",
+    "pandas-stubs>=2.0",
 ]
 rqalpha = ["rqalpha>=6.1"]
 pdf-vision = ["pdf2image>=1.17"]
 instructor = ["instructor>=1.0"]
 ricequant = ["rqdatac"]
 qlib = []
+tushare = ["tushare"]
 paddle = ["paddleocr"]
 vlm = ["transformers", "torch"]
 formula = ["pix2text"]
@@ -52,8 +56,8 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/reproagent", "src/finreportparser"]
 
-# src 布局：将 src/reproagent 作为包 reproagent 安装
-[tool.hatch.build.targets.wheel.force-include]
+# Map src layout so both packages install from workspace sources under editable mode.
+[tool.hatch.build.targets.wheel.sources]
 "src/reproagent" = "reproagent"
 "src/finreportparser" = "finreportparser"
 
@@ -70,9 +74,22 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
+# HTML template strings
 "src/reproagent/library/dashboard.py" = ["E501"]
+# Vendored PDF backend: style noise from upstream
+"src/finreportparser/**" = ["E501", "E701", "E702", "E731", "E722"]
+# Preserved prototype from 量化agent.zip — do not reformat as core code
+"src/reproagent/legacy_quant/**" = ["E", "F", "I", "UP"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = false
 packages = ["reproagent"]
+ignore_missing_imports = true
+warn_unused_ignores = false
+disable_error_code = ["import-untyped", "import-not-found"]
+exclude = ["src/reproagent/legacy_quant"]
+
+[[tool.mypy.overrides]]
+module = "reproagent.legacy_quant.*"
+ignore_errors = true

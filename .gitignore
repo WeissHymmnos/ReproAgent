@@ -33,6 +33,11 @@ coverage.xml
 # App data (local runtime)
 *.db
 *.sqlite3
+output/
+~/.reproagent/
+
+# Local scratch / probes
+test_pdf_import.py
 
 # OS
 .DS_Store
