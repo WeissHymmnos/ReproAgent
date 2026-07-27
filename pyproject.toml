@@ -43,7 +43,7 @@ ricequant = ["rqdatac"]
 qlib = []
 tushare = ["tushare"]
 paddle = ["paddleocr"]
-vlm = ["transformers", "torch"]
+vlm = ["transformers>=4.45", "torch", "torchvision", "accelerate"]
 formula = ["pix2text"]
 
 [project.scripts]

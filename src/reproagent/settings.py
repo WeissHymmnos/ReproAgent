@@ -32,7 +32,9 @@ class Settings(BaseSettings):
     parser_backend: Literal["finpdfpro", "marker", "llamaparse", "mineru"] = "finpdfpro"
     parser_version: str = "1.0.0"
     finpdfpro_mode: Literal["fast", "balanced", "max-quality"] = "balanced"
-    finpdfpro_vlm_backend: Literal["none", "paddle_vl", "smolvlm", "llamacpp_http"] = "none"
+    finpdfpro_vlm_backend: Literal[
+        "none", "paddle_vl", "smolvlm", "edge", "hybrid", "llamacpp_http"
+    ] = "none"
 
     # Data
     data_source: Literal["ricequant", "qlib", "local", "tushare"] = "local"

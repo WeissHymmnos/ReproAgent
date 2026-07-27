@@ -38,7 +38,25 @@ def render_markdown(doc: DocumentResult) -> str:
                 description = block.text
                 if description.strip() == "图表，数据：HAITONG":
                     description = "图中主要为图形元素，OCR 文本有限"
-                parts.append(f"**[图表: {chart_type}]** {title}\n\n{description}\n\n")
+                # Classify-first metadata line
+                cls = chart_meta.get("classification") or {}
+                conf = cls.get("confidence")
+                src = cls.get("source")
+                rationale = cls.get("rationale")
+                cls_bits = [f"type={chart_type}"]
+                if conf is not None:
+                    try:
+                        cls_bits.append(f"conf={float(conf):.2f}")
+                    except (TypeError, ValueError):
+                        pass
+                if src:
+                    cls_bits.append(f"source={src}")
+                if rationale:
+                    cls_bits.append(f"why={rationale}")
+                header = f"**[图表: {chart_type}]** {title}"
+                if len(cls_bits) > 1:
+                    header += f"  \n<!-- classify: {' '.join(cls_bits)} -->"
+                parts.append(f"{header}\n\n{description}\n\n")
                 continue
 
             sanitized = sanitize_document_text(block.text)
