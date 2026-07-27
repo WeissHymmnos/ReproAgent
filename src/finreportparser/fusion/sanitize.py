@@ -73,5 +73,13 @@ def sanitize_document_text(text: str) -> str:
 
     text = strip_broker_template_tags(text)
     text = strip_repeated_headers_footers(text)
+    # Light OCR phrase cleanup for residual text blocks (tables go through
+    # table_repair which applies the full lexicon + structural fixes).
+    try:
+        from finreportparser.fusion.table_repair import apply_ocr_phrase_fixes
+
+        text = apply_ocr_phrase_fixes(text)
+    except Exception:
+        pass
 
     return text

@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from finreportparser.types import ChartMeta
+from finreportparser.types import ChartClassification, ChartMeta
 
 
 class BaseVLMProvider(Protocol):
@@ -11,4 +11,9 @@ class BaseVLMProvider(Protocol):
         ...
 
     def unload(self) -> None:
+        ...
+
+    # Optional: real edge-VLM chart classification (classify-first pipeline)
+    def classify_chart(self, image_bytes: bytes) -> ChartClassification | None:
+        """Return visual classification; None if backend cannot classify."""
         ...

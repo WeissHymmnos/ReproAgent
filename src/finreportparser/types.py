@@ -29,6 +29,8 @@ class VlmBackend(StrEnum):
     PADDLE_VL = "paddle_vl"
     SMOLVLM = "smolvlm"
     LLAMACPP_HTTP = "llamacpp_http"
+    # Edge hybrid: small VLM classify + Paddle OCR describe
+    EDGE = "edge"
 
 class PageClass(StrEnum):
     BLANK = "blank"
@@ -37,6 +39,36 @@ class PageClass(StrEnum):
     TABLE_CANDIDATE = "table_candidate"
     CHART_CANDIDATE = "chart_candidate"
     MIXED = "mixed"
+
+
+class ChartType(StrEnum):
+    """Canonical chart/diagram taxonomy used by classify-first pipeline."""
+
+    BAR = "bar"
+    LINE = "line"
+    PIE = "pie"
+    SCATTER = "scatter"
+    HEATMAP = "heatmap"
+    FRAMEWORK = "framework"  # multi-panel methodology / roadmap cards
+    FLOWCHART = "flowchart"
+    TABLE = "table"
+    OTHER = "other"
+    UNKNOWN = "unknown"
+
+
+class ChartClassification(BaseModel):
+    """Result of chart classification (before description)."""
+
+    chart_type: ChartType = ChartType.UNKNOWN
+    confidence: float = 0.0
+    # Where the decision came from: vlm | ocr | fusion
+    source: Literal["vlm", "ocr", "fusion"] = "fusion"
+    vlm_type: ChartType | None = None
+    vlm_confidence: float | None = None
+    ocr_type: ChartType | None = None
+    ocr_confidence: float | None = None
+    labels_considered: list[str] = Field(default_factory=list)
+    rationale: str | None = None
 
 class BBox(BaseModel):
     x0: float
@@ -79,6 +111,8 @@ class ChartMeta(BaseModel):
     description: str
     title: str | None = None
     data_points: list[dict[str, Any]] | None = None
+    # Optional classify-first metadata (serialized into block.metadata)
+    classification: ChartClassification | None = None
 
 class MermaidBlock(BaseModel):
     bbox: BBox | None = None

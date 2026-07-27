@@ -11,7 +11,9 @@ class Config(BaseModel):
     workers: int = Field(default=2, ge=1)
     ocr_backend: Literal["paddle", "unlimited-ocr"] = "paddle"
     table_backend: Literal["paddle", "mineru", "unlimited-ocr"]
-    vlm_backend: Literal["none", "paddle_vl", "smolvlm", "llamacpp_http", "unlimited-ocr"]
+    vlm_backend: Literal[
+        "none", "paddle_vl", "smolvlm", "llamacpp_http", "unlimited-ocr", "edge", "hybrid"
+    ]
     formula_backend: Literal["none", "l1", "pix2text", "auto"] = "auto"
     image_max_edge: int = Field(default=768, ge=512, le=768)
     resume: bool = True

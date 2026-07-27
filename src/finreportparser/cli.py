@@ -60,7 +60,8 @@ def parse(
     vlm_backend: str | None = typer.Option(
         None,
         "--vlm-backend",
-        help="VLM backend: none | paddle_vl | smolvlm | llamacpp_http",
+        help="VLM backend: none | paddle_vl | smolvlm | edge | llamacpp_http "
+        "(edge = SmolVLM-256M classify + OCR fusion, recommended)",
     ),
     formula_backend: str | None = typer.Option(
         None,
@@ -198,7 +199,10 @@ def doctor() -> None:
     if importlib.util.find_spec("transformers"):
         typer.echo("OK    transformers: available")
     else:
-        typer.echo("WARN  transformers: not installed (SmolVLM backend unavailable; uv sync --extra smolvlm)")
+        typer.echo(
+            "WARN  transformers: not installed "
+            "(edge/SmolVLM unavailable; uv sync --extra vlm)"
+        )
         warnings += 1
 
     llama_server = shutil.which("llama-server")
