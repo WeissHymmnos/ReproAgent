@@ -75,6 +75,25 @@ def test_repair_merged_numeric_cells() -> None:
     assert "A" in result.gfm
 
 
+def test_expand_partial_glued_header_cells() -> None:
+    """Multiple cells each glue two metrics — expand all, not just the fattest."""
+    gfm = """| 展示名称 | 中性化处理 | 年化收益率年化波动率 |  | 最大回撤夏普比率 |  | 子IC | RankIC | 超额收益 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 债底距离 | 信用评级、剩余期限 | 14.09% | 12.65% | -13.68% | 1.11 | 0.08 | 0.14 | 6.95% |
+| 纯债溢价率均值修复 | 信用评级、剩余期限 | 6.15% | 14.26% | -20.45% | 0.43 | 0.02 | 0.04 | -0.02% |
+"""
+    result = repair_table_gfm(gfm)
+    header = result.gfm.split("\n")[0]
+    assert "年化收益率" in header
+    assert "年化波动率" in header
+    assert "最大回撤" in header
+    assert "夏普比率" in header
+    assert "因子IC" in header
+    assert "年化收益率年化波动率" not in header
+    assert "最大回撤夏普比率" not in header
+    assert is_acceptable_table(result.gfm)
+
+
 def test_clean_table_not_destroyed() -> None:
     gfm = """| 展示名称 | 中性化处理 | 年化收益率 | 年化波动率 | 最大回撤 | 夏普比率 | 因子IC | RankIC | 超额收益 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

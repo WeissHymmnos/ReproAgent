@@ -55,16 +55,33 @@ _HEADER_TOKENS: tuple[str, ...] = tuple(
             "2024年收益",
             "2025年收益",
             "2026年收益",
+            "2022年益",  # OCR truncated
             "名称",
             "代码",
             "评级",
             "期限",
             "规模",
+            "卡玛比率",
+            "卡比率",
         },
         key=len,
         reverse=True,
     )
 )
+
+# Canonical factor-backtest header (most common research layout)
+_STANDARD_FACTOR_HEADERS: tuple[str, ...] = (
+    "展示名称",
+    "中性化处理",
+    "年化收益率",
+    "年化波动率",
+    "最大回撤",
+    "夏普比率",
+    "因子IC",
+    "RankIC",
+    "超额收益",
+)
+
 
 # Phrase-level OCR confusions (wrong → correct). Prefer longer phrases first.
 # Covers common PP-OCR / low-res confusions in Chinese financial text.
@@ -103,11 +120,22 @@ _OCR_PHRASE_FIXES: tuple[tuple[str, str], ...] = tuple(
             ("平化波暗率", "年化波动率"),
             ("年化成动率", "年化波动率"),
             ("最大W撒", "最大回撤"),
+            ("最大W", "最大回撤"),
             ("最大四根", "最大回撤"),
             ("最大四", "最大回撤"),
             ("最大更普", "最大回撤"),
+            ("诗级", "评级"),
+            ("讨载", "评级"),
+            ("诗间", "评级"),
+            ("售合波动率", "隐含波动率"),
+            ("正胶波动率", "正股波动率"),
+            ("短期收通动量", "短期收益动量"),
             ("夏晋比率", "夏普比率"),
             ("更普比", "夏普比率"),
+            ("最大重普", "最大回撤"),
+            ("卡比率", "卡玛比率"),
+            ("图子名称", "因子名称"),
+            ("2022年益", "2022年收益"),
             # IC / excess
             ("因于IC", "因子IC"),
             ("园手IC", "因子IC"),
@@ -270,6 +298,9 @@ def apply_ocr_phrase_fixes(text: str) -> str:
             out = out.replace(wrong, right)
     # Isolated 评线 (not already 评级)
     out = re.sub(r"(?<!评)评线", "评级", out)
+    # 子IC → 因子IC but never touch 因子IC (lookbehind)
+    out = re.sub(r"(?<!因)子IC", "因子IC", out)
+    out = re.sub(r"因因子IC", "因子IC", out)
     # Collapse residual 信用评级级…
     out = re.sub(r"信用评级级+", "信用评级", out)
     out = re.sub(r"信评级级+", "信用评级", out)
@@ -278,10 +309,10 @@ def apply_ocr_phrase_fixes(text: str) -> str:
     return out
 
 
-def _greedy_split_header(blob: str) -> list[str] | None:
+def _greedy_split_header(blob: str, *, min_parts: int = 2) -> list[str] | None:
     """Greedy longest-token match to split a glued header string."""
     s = re.sub(r"\s+", "", blob)
-    if len(s) < 6:
+    if len(s) < 4:
         return None
     # Normalize common OCR mess before matching
     s = apply_ocr_phrase_fixes(s)
@@ -291,9 +322,11 @@ def _greedy_split_header(blob: str) -> list[str] | None:
         .replace("平化波暗率", "年化波动率")
         .replace("年化成动率", "年化波动率")
         .replace("最大W撒", "最大回撤")
+        .replace("最大重普", "最大回撤")
         .replace("因于IC", "因子IC")
         .replace("超收盖", "超额收益")
         .replace("超收益", "超额收益")
+        .replace("子IC", "因子IC")
     )
 
     parts: list[str] = []
@@ -326,19 +359,33 @@ def _greedy_split_header(blob: str) -> list[str] | None:
                 parts.append(frag)
         i = j
 
-    # Need at least 3 recovered columns to be useful
-    if len(parts) < 3:
+    if len(parts) < min_parts:
         return None
     return parts
 
 
+def _cell_is_multi_metric(cell: str) -> bool:
+    """True if a single header cell contains ≥2 known metric tokens."""
+    if not cell or len(cell) < 6:
+        return False
+    fixed = apply_ocr_phrase_fixes(cell)
+    if "|" in fixed:
+        return True
+    hits = sum(1 for tok in _HEADER_TOKENS if tok in fixed and len(tok) >= 3)
+    # also glue hints
+    hits += sum(1 for h in _GLUE_HINTS if h in fixed)
+    return hits >= 2 or (len(re.sub(r"\s+", "", fixed)) >= 10 and hits >= 1)
+
+
 def header_looks_glued(header: list[str]) -> bool:
-    """True if header has one oversized cell that likely merged several metrics."""
+    """True if header has cells that likely merged several metrics."""
     if not header:
         return False
     non_empty = [c for c in header if c and c != "---"]
     if not non_empty:
         return False
+    if any(_cell_is_multi_metric(c) for c in non_empty):
+        return True
     # Classic failure: many empty cells + one fat cell
     empty = sum(1 for c in header if not c)
     fat = [c for c in header if len(re.sub(r"\s+", "", c)) >= 12]
@@ -346,12 +393,65 @@ def header_looks_glued(header: list[str]) -> bool:
         blob = max(fat, key=len)
         if any(h in blob for h in _GLUE_HINTS):
             return True
-    # Or single cell containing multiple metric keywords
-    for c in non_empty:
-        hits = sum(1 for h in _GLUE_HINTS if h in c)
-        if hits >= 2 and len(re.sub(r"\s+", "", c)) >= 10:
-            return True
     return False
+
+
+def _expand_header_cells(header: list[str]) -> list[str]:
+    """Split *every* multi-metric header cell; drop empties; de-dupe adjacent."""
+    expanded: list[str] = []
+    for cell in header:
+        if not cell or cell == "---":
+            continue
+        if _cell_is_multi_metric(cell):
+            split = _greedy_split_header(cell, min_parts=2)
+            if split:
+                expanded.extend(split)
+                continue
+        expanded.append(apply_ocr_phrase_fixes(cell))
+    # de-dupe consecutive identical headers (OCR double-read)
+    deduped: list[str] = []
+    for h in expanded:
+        if deduped and deduped[-1] == h:
+            continue
+        # drop exact later duplicates of RankIC/因子IC when consecutive pattern broken
+        deduped.append(h)
+    # collapse non-adjacent exact duplicate metric tails (e.g. RankIC ... RankIC)
+    seen: set[str] = set()
+    final: list[str] = []
+    for h in deduped:
+        key = h.lower()
+        if key in ("rankic", "因子ic", "icir", "rankicir") and key in seen:
+            continue
+        if key in ("rankic", "因子ic", "icir", "rankicir"):
+            seen.add(key)
+        final.append(h)
+    return final
+
+
+def _maybe_standard_factor_header(header: list[str], data_cols: int) -> list[str] | None:
+    """If row shape matches classic factor table, force canonical headers."""
+    if data_cols < 8 or data_cols > 12:
+        return None
+    blob = "".join(header)
+    signals = ("年化", "回撤", "夏普", "RankIC", "超额", "展示名称", "因子", "中性化")
+    if sum(1 for s in signals if s in blob) < 3:
+        return None
+    # Prefer 9-col canonical layout (most common); wider data still maps to 9
+    # and body realign will pad/trim.
+    if data_cols in (8, 9, 10):
+        if data_cols == 8 and "中性化" not in blob:
+            return [
+                "展示名称",
+                "年化收益率",
+                "年化波动率",
+                "最大回撤",
+                "夏普比率",
+                "因子IC",
+                "RankIC",
+                "超额收益",
+            ]
+        return list(_STANDARD_FACTOR_HEADERS)
+    return None
 
 
 def _median_data_cols(rows: list[list[str]]) -> int:
@@ -376,7 +476,13 @@ def _pad_or_trim(row: list[str], n: int) -> list[str]:
 
 
 def _split_merged_numeric_cell(cell: str) -> list[str] | None:
-    """Split '13.41% -17.69%' style merges into two cells."""
+    """Split glued numeric cells into two values.
+
+    Handles:
+      - ``13.41% -17.69%`` (space-separated)
+      - ``7.24%10.11%`` (no separator, common OCR glue)
+      - ``8.08%12.83%``
+    """
     cell = cell.strip()
     # two percentages/numbers separated by space
     m = re.match(
@@ -385,48 +491,76 @@ def _split_merged_numeric_cell(cell: str) -> list[str] | None:
     )
     if m:
         return [m.group(1), m.group(2)]
+    # glued percentages without separator
+    m = re.match(
+        r"^([+-]?\d+(?:\.\d+)?%)([+-]?\d+(?:\.\d+)?%)$",
+        cell,
+    )
+    if m:
+        return [m.group(1), m.group(2)]
     return None
 
 
+def _split_all_numbers(cell: str) -> list[str] | None:
+    """Split a cell into all numeric tokens if ≥2 numbers present."""
+    cell = (cell or "").strip()
+    if not cell:
+        return None
+    parts = re.findall(r"[+-]?\d+(?:\.\d+)?%?", cell)
+    if len(parts) >= 2 and "".join(parts) == re.sub(r"[\s,，、;/|]+", "", cell):
+        return parts
+    # also allow separators between numbers
+    if len(parts) >= 2 and re.fullmatch(
+        r"[+-]?\d+(?:\.\d+)?%?(?:\s+[+-]?\d+(?:\.\d+)?%?)+", cell
+    ):
+        return parts
+    return _split_merged_numeric_cell(cell)
+
+
 def repair_data_row_merges(row: list[str], target_cols: int) -> list[str]:
-    """Expand merged numeric cells; fill empty slots from adjacent merges.
+    """Expand merged numeric cells and drop empty placeholders to hit *target_cols*.
 
     Handles: ``9.07% |  | 12.29% -16.33% | …`` → ``9.07% | 12.29% | -16.33% | …``
-    without first blindly splitting (which would overshoot column count).
+    and multi-value cells like ``1.17 7.24%``.
     """
-    # Prefer empty-slot absorption before blind expand
-    fixed: list[str] = []
-    i = 0
-    while i < len(row):
-        cell = row[i]
-        # num | "" | "a b"  → num | a | b
-        if (
-            i + 2 < len(row)
-            and row[i + 1] == ""
-            and _split_merged_numeric_cell(row[i + 2])
-        ):
-            parts = _split_merged_numeric_cell(row[i + 2])
-            assert parts is not None
-            fixed.append(cell)
-            fixed.extend(parts)
-            i += 3
-            continue
-        # "" | "a b" → a | b
-        if cell == "" and i + 1 < len(row) and _split_merged_numeric_cell(row[i + 1]):
-            parts = _split_merged_numeric_cell(row[i + 1])
-            assert parts is not None
-            fixed.extend(parts)
-            i += 2
-            continue
-        # plain "a b" only when we're still short of target
-        parts = _split_merged_numeric_cell(cell)
-        if parts and len(fixed) + len(parts) + (len(row) - i - 1) <= target_cols:
-            fixed.extend(parts)
-        else:
-            fixed.append(cell)
-        i += 1
+    cells = list(row)
 
-    return _pad_or_trim(fixed, target_cols)
+    # 1) Drop empty placeholders first so multi-value cells can expand into
+    # the freed slots (common text-layer misalignment).
+    nonempty = [c for c in cells if c != ""]
+    # Estimate expandable numeric tokens
+    token_count = 0
+    for c in nonempty:
+        parts = _split_all_numbers(c)
+        token_count += len(parts) if parts else 1
+    if token_count >= target_cols and len(nonempty) < len(cells):
+        cells = nonempty
+    elif len(cells) > target_cols:
+        while len(cells) > target_cols and "" in cells:
+            cells.remove("")
+
+    # 2) Iteratively expand multi-value numeric cells while under target
+    changed = True
+    guard = 0
+    while changed and guard < 16:
+        guard += 1
+        changed = False
+        next_cells: list[str] = []
+        for idx, cell in enumerate(cells):
+            remaining_after = len(cells) - idx - 1
+            parts = _split_all_numbers(cell)
+            if parts and len(next_cells) + len(parts) + remaining_after <= target_cols:
+                next_cells.extend(parts)
+                if len(parts) > 1:
+                    changed = True
+            else:
+                next_cells.append(cell)
+        cells = next_cells
+
+    while len(cells) > target_cols and "" in cells:
+        cells.remove("")
+
+    return _pad_or_trim(cells, target_cols)
 
 
 def repair_table_gfm(gfm: str) -> TableRepairResult:
@@ -444,51 +578,83 @@ def repair_table_gfm(gfm: str) -> TableRepairResult:
             actions=["phrase_fix"] if fixed != gfm else [],
         )
 
-    # Drop separator rows from logical processing; rebuild later
-    header = [apply_ocr_phrase_fixes(c) for c in rows[0]]
-    if header != rows[0]:
+    def _nonempty_count(r: list[str]) -> int:
+        return sum(1 for c in r if c and c != "---")
+
+    def _looks_like_header_row(r: list[str]) -> bool:
+        blob = "".join(r)
+        keys = ("展示名称", "因子名称", "年化", "中性化", "RankIC", "超额", "最大回撤", "夏普")
+        return sum(1 for k in keys if k in blob) >= 2 or any(
+            _cell_is_multi_metric(c) for c in r if c
+        )
+
+    # Drop separator rows
+    body = [
+        r
+        for r in rows
+        if not (r and all(c == "---" or re.match(r"^:?-+:?$", c or "") for c in r))
+    ]
+    if len(body) < 2:
+        fixed = apply_ocr_phrase_fixes(gfm)
+        return TableRepairResult(gfm=fixed, repaired=fixed != gfm, actions=[])
+
+    # Skip title/caption rows mistaken as header (e.g. "图表5：主要单因子…")
+    header_idx = 0
+    if (
+        len(body) >= 3
+        and _nonempty_count(body[0]) <= 3
+        and _looks_like_header_row(body[1])
+        and not _looks_like_header_row(body[0])
+    ):
+        header_idx = 1
+        actions.append("skip_title_row")
+
+    header = [apply_ocr_phrase_fixes(c) for c in body[header_idx]]
+    if header != body[header_idx]:
         actions.append("header_phrase_fix")
 
     data_rows: list[list[str]] = []
-    for r in rows[1:]:
-        if r and all(c == "---" or re.match(r"^:?-+:?$", c or "") for c in r):
-            continue
+    for r in body[header_idx + 1 :]:
         fixed_r = [apply_ocr_phrase_fixes(c) for c in r]
         if fixed_r != r:
             actions.append("body_phrase_fix")
         data_rows.append(fixed_r)
 
-    # --- Glued header split ---
-    if header_looks_glued(header):
-        # Prefer splitting the fattest cell; keep leading name columns
-        fat_idx = max(range(len(header)), key=lambda i: len(header[i] or ""))
-        leading = [c for c in header[:fat_idx] if c]
-        trailing = [c for c in header[fat_idx + 1 :] if c]
-        split = _greedy_split_header(header[fat_idx])
-        if split:
-            new_header = leading + split + trailing
-            # Deduplicate accidental doubles
-            deduped: list[str] = []
-            for h in new_header:
-                if not deduped or deduped[-1] != h:
-                    deduped.append(h)
-            header = deduped
-            actions.append(f"split_glued_header→{len(header)}cols")
-
-    # If still weak header but data is wide, synthesize metric headers from lexicon
     median_cols = _median_data_cols([header] + data_rows) if data_rows else len(header)
+
+    # --- Expand multi-metric cells across the whole header row ---
+    if header_looks_glued(header) or any(_cell_is_multi_metric(c) for c in header if c):
+        expanded = _expand_header_cells(header)
+        if len(expanded) > len([c for c in header if c]):
+            header = expanded
+            actions.append(f"expand_header_cells→{len(header)}cols")
+
+    # Full-blob resplit when still weak
     non_empty_h = [c for c in header if c]
-    if len(non_empty_h) <= 3 and median_cols >= 6:
-        # Try splitting concatenation of all header cells
+    if len(non_empty_h) <= 4 and median_cols >= 6:
         blob = "".join(non_empty_h)
-        split = _greedy_split_header(blob)
-        if split and len(split) >= median_cols - 1:
+        split = _greedy_split_header(blob, min_parts=4)
+        if split and len(split) >= max(4, median_cols - 2):
             header = split[:median_cols] if len(split) >= median_cols else split
             actions.append("resplit_header_blob")
 
-    target_cols = max(len(header), median_cols)
-    # Prefer header length when we successfully split
-    if "split_glued_header" in "".join(actions) or "resplit_header_blob" in "".join(actions):
+    # Canonical factor-table header when shape matches
+    std = _maybe_standard_factor_header(header, median_cols)
+    if std is not None and (
+        header_looks_glued(header)
+        or any(_cell_is_multi_metric(c) for c in header if c)
+        or len([c for c in header if c]) < median_cols - 1
+    ):
+        header = list(std)
+        actions.append(f"standard_factor_header→{len(header)}cols")
+
+    target_cols = median_cols if median_cols >= 2 else len(header)
+    # Prefer expanded/standard header width when close to data width
+    if abs(len(header) - median_cols) <= 1 and len(header) >= 6:
+        target_cols = len(header)
+    elif len(header) >= median_cols and any(
+        a.startswith(("expand_header", "standard_factor", "resplit")) for a in actions
+    ):
         target_cols = len(header)
 
     header = _pad_or_trim(header, target_cols)

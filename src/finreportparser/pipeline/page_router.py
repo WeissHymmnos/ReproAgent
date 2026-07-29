@@ -69,14 +69,27 @@ def route_page(
     elif mode == QualityMode.BALANCED:
         if page.needs_ocr or page_class == PageClass.SCANNED:
             run_ocr = True
+        # Structure on table pages only — skip VLM here (major speed win:
+        # logos/headers on table pages used to trigger SmolVLM per image).
         if page_class == PageClass.TABLE_CANDIDATE:
             run_structure = True
-            if images and len(images) >= 1:
-                run_vlm = True
         if page_class == PageClass.CHART_CANDIDATE:
             run_vlm = True
-        if page_class == PageClass.MIXED and images and len(images) >= 1:
-            run_vlm = True
+        # MIXED: structure for digit-heavy tables; VLM only when images present
+        if page_class == PageClass.MIXED:
+            if images and len(images) >= 1:
+                run_vlm = True
+            # Heuristic: also run structure on mixed pages with many digits
+            text_blocks = [b for b in page.blocks if b.type == BlockType.TEXT and b.text]
+            full = "\n".join(b.text or "" for b in text_blocks)
+            lines = full.split("\n")
+            digit_heavy = sum(
+                1
+                for line in lines
+                if len(line) > 5 and sum(c.isdigit() for c in line) > len(line) * 0.3
+            )
+            if digit_heavy > 3 or full.count("%") >= 8:
+                run_structure = True
     elif mode == QualityMode.MAX_QUALITY:
         if page.needs_ocr or page_class in (
             PageClass.SCANNED,

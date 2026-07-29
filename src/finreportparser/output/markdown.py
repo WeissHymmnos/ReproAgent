@@ -31,11 +31,20 @@ def render_markdown(doc: DocumentResult) -> str:
                     parts.append(f"$$\n{latex}\n$$\n\n")
                 continue
 
+            # Skip blocks already classified as header/footer
+            if block.type in (BlockType.HEADER, BlockType.FOOTER):
+                continue
+
             if block.type == BlockType.CHART:
                 chart_meta = block.metadata.get("chart_meta", {}) if block.metadata else {}
                 chart_type = chart_meta.get("chart_type", "unknown")
                 title = chart_meta.get("title", "Chart")
                 description = block.text
+                # Drop logo-only chart blocks (broker headers)
+                from finreportparser.fusion.headers_footers import is_header_footer_block
+
+                if is_header_footer_block(block):
+                    continue
                 if description.strip() == "图表，数据：HAITONG":
                     description = "图中主要为图形元素，OCR 文本有限"
                 # Classify-first metadata line

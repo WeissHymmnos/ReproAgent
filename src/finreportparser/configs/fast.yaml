@@ -1,5 +1,5 @@
 mode: fast
-workers: 2
+workers: 1
 table_backend: paddle
 vlm_backend: none
 image_max_edge: 512
@@ -8,5 +8,13 @@ out_dir: ./output
 sidecar: false
 cache_dir: null
 model_dir: ~/.cache/finreportparser/models
-cpu_threads: 4
+cpu_threads: 2
 enable_hpi: false
+max_vlm_images: 0
+prefer_text_tables: true
+allow_structure: false
+structure_only_if_text_weak: true
+allow_ocr: false
+allow_vlm: false
+strip_headers_footers: true
+text_table_min_score: 0.40
