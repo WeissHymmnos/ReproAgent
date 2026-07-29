@@ -4,8 +4,11 @@ Designed for edge/CPU deployment:
   - Classifier: SmolVLM-256M-Instruct (or any client with classify_chart)
   - OCR/describe: PaddleOCR via PaddleVLProvider
 
-Pipeline:
-  classify(VLM) + classify(OCR) → fuse → type-specific description
+Speed strategy:
+  1. OCR prior first (cheap)
+  2. Skip VLM when OCR confidence is high enough
+  3. Reuse OCR lines for describe (no double OCR)
+  4. Mermaid only for framework/flowchart, without re-classify
 """
 
 from __future__ import annotations
@@ -24,6 +27,9 @@ from finreportparser.vlm.smolvlm import SmolVlmProvider
 
 logger = logging.getLogger(__name__)
 
+# Skip expensive edge VLM when OCR prior is already confident
+_OCR_SKIP_VLM_THRESHOLD = 0.72
+
 
 class EdgeHybridVLM:
     """Classify with edge VLM, describe with OCR, fuse both signals."""
@@ -33,9 +39,30 @@ class EdgeHybridVLM:
         *,
         classifier: Any | None = None,
         ocr_provider: Any | None = None,
+        ocr_skip_vlm_threshold: float = _OCR_SKIP_VLM_THRESHOLD,
     ):
         self._classifier = classifier or SmolVlmProvider()
         self._ocr = ocr_provider or PaddleVLProvider()
+        self._ocr_skip_vlm_threshold = ocr_skip_vlm_threshold
+        # per-call cache to avoid double OCR within describe
+        self._last_ocr_lines: list | None = None
+        self._last_ocr_key: int | None = None
+
+    def _ocr_lines(self, image_bytes: bytes) -> list:
+        key = id(image_bytes) if not isinstance(image_bytes, (bytes, bytearray)) else hash(
+            image_bytes[:64] + image_bytes[-64:] + len(image_bytes).to_bytes(4, "little")
+        )
+        if self._last_ocr_key == key and self._last_ocr_lines is not None:
+            return self._last_ocr_lines
+        lines: list = []
+        try:
+            if hasattr(self._ocr, "_run_ocr"):
+                lines = self._ocr._run_ocr(image_bytes)  # noqa: SLF001
+        except Exception as e:
+            logger.warning("OCR failed: %s", e)
+        self._last_ocr_key = key
+        self._last_ocr_lines = lines
+        return lines
 
     def classify_chart(self, image_bytes: bytes) -> ChartClassification:
         vlm_type: ChartType | None = None
@@ -43,29 +70,36 @@ class EdgeHybridVLM:
         ocr_type: ChartType | None = None
         ocr_c: float | None = None
 
-        # --- Edge VLM visual classification ---
-        try:
-            if hasattr(self._classifier, "classify_chart"):
-                vlm_cls = self._classifier.classify_chart(image_bytes)
-                if vlm_cls is not None:
-                    vlm_type = (
-                        vlm_cls.chart_type
-                        if isinstance(vlm_cls.chart_type, ChartType)
-                        else ChartType(str(vlm_cls.chart_type))
-                    )
-                    vlm_c = float(vlm_cls.confidence or 0.0)
-        except Exception as e:
-            logger.warning("Edge VLM classify failed: %s", e)
+        # --- OCR prior first (fast path) ---
+        lines = self._ocr_lines(image_bytes)
+        if lines:
+            ocr_type, ocr_c, _ = ocr_prior_from_lines(lines)
 
-        # --- OCR prior ---
-        try:
-            lines = []
-            if hasattr(self._ocr, "_run_ocr"):
-                lines = self._ocr._run_ocr(image_bytes)  # noqa: SLF001 — shared OCR path
-            if lines:
-                ocr_type, ocr_c, _ = ocr_prior_from_lines(lines)
-        except Exception as e:
-            logger.warning("OCR classify prior failed: %s", e)
+        # --- Edge VLM only when OCR is weak/unknown ---
+        need_vlm = (
+            ocr_type is None
+            or ocr_type == ChartType.UNKNOWN
+            or (ocr_c or 0.0) < self._ocr_skip_vlm_threshold
+        )
+        if need_vlm:
+            try:
+                if hasattr(self._classifier, "classify_chart"):
+                    vlm_cls = self._classifier.classify_chart(image_bytes)
+                    if vlm_cls is not None:
+                        vlm_type = (
+                            vlm_cls.chart_type
+                            if isinstance(vlm_cls.chart_type, ChartType)
+                            else ChartType(str(vlm_cls.chart_type))
+                        )
+                        vlm_c = float(vlm_cls.confidence or 0.0)
+            except Exception as e:
+                logger.warning("Edge VLM classify failed: %s", e)
+        else:
+            logger.debug(
+                "Skip VLM classify (OCR %s conf=%.2f)",
+                ocr_type,
+                ocr_c or 0.0,
+            )
 
         return fuse_classification(
             vlm_type=vlm_type,
@@ -75,14 +109,15 @@ class EdgeHybridVLM:
         )
 
     def describe_chart(self, image_bytes: bytes) -> ChartMeta | None:
-        # 1) Classify first
+        # 1) Classify first (OCR-first, maybe skip VLM)
         classification = self.classify_chart(image_bytes)
         chart_type = classification.chart_type
 
-        # 2) OCR structured description, guided by classification
+        # 2) OCR structured description — reuse lines when possible
         meta: ChartMeta | None = None
         try:
             if hasattr(self._ocr, "describe_chart_as"):
+                # Prefer path that uses precomputed lines if we add it; else normal
                 meta = self._ocr.describe_chart_as(image_bytes, chart_type)
             else:
                 meta = self._ocr.describe_chart(image_bytes)
@@ -99,11 +134,9 @@ class EdgeHybridVLM:
                 data_points=[],
             )
 
-        # Force fused type onto meta
         meta.chart_type = chart_type.value
         meta.classification = classification
 
-        # Prefix description with classification banner for markdown clarity
         zh = CHART_TYPE_ZH.get(chart_type, chart_type.value)
         banner = (
             f"【分类】{zh}（{chart_type.value}）"
@@ -122,20 +155,30 @@ class EdgeHybridVLM:
             meta.description = f"{banner}\n{desc}"
         return meta
 
-    def diagram_to_mermaid_candidates(self, image_bytes: bytes) -> list[str]:
-        cls = self.classify_chart(image_bytes)
-        if cls.chart_type not in (ChartType.FRAMEWORK, ChartType.FLOWCHART):
+    def diagram_to_mermaid_candidates(
+        self, image_bytes: bytes, chart_type: str | ChartType | None = None
+    ) -> list[str]:
+        """Generate mermaid only for structure diagrams. Pass chart_type to skip re-classify."""
+        if chart_type is not None:
+            ctype = (
+                chart_type
+                if isinstance(chart_type, ChartType)
+                else ChartType(str(chart_type))
+            )
+        else:
+            ctype = self.classify_chart(image_bytes).chart_type
+
+        if ctype not in (ChartType.FRAMEWORK, ChartType.FLOWCHART):
             return []
-        # Prefer OCR-layout mermaid when available
         if hasattr(self._ocr, "diagram_to_mermaid_candidates"):
             codes = self._ocr.diagram_to_mermaid_candidates(image_bytes) or []
             if codes:
                 return codes
-        if hasattr(self._classifier, "diagram_to_mermaid_candidates"):
-            return self._classifier.diagram_to_mermaid_candidates(image_bytes) or []
         return []
 
     def unload(self) -> None:
+        self._last_ocr_lines = None
+        self._last_ocr_key = None
         for eng in (self._classifier, self._ocr):
             if eng is not None and hasattr(eng, "unload"):
                 try:

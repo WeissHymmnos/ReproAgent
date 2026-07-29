@@ -81,7 +81,11 @@ def parse_pdf(
         config.mode,
         config.table_backend,
         config.vlm_backend,
-        config.image_max_edge
+        config.image_max_edge,
+        prefer_text_tables=getattr(config, "prefer_text_tables", True),
+        allow_structure=getattr(config, "allow_structure", True),
+        allow_ocr=getattr(config, "allow_ocr", True),
+        allow_vlm=getattr(config, "allow_vlm", False),
     )
 
     # Reuse heavy Paddle engines across pages to avoid reload/OOM (SIGBUS).
@@ -140,18 +144,47 @@ def parse_pdf(
                 logger.info("Parsing page %d/%d", page_num, len(doc))
                 page_result = extract_page_text(page, page_num)
 
-                # Lightweight pre-check: skip full image extraction when the page has
-                # no text blocks and no raw image xrefs (blank-page fast-path).
-                if not page_result.blocks:
-                    raw_imgs = page.get_images(full=True)
-                    if not raw_imgs:
-                        images = []
+                # Fast path: route with text only first; skip image decode on
+                # pure-text / table pages (big speed win for long research PDFs).
+                pre = route_page(page_result, config.mode, images=None)
+                text_join = "\n".join(
+                    b.text or "" for b in page_result.blocks if b.text
+                )
+                chart_kw = (
+                    "图表" in text_join
+                    or "Figure" in text_join
+                    or "figure" in text_join.lower()
+                )
+                need_images = (
+                    page_result.needs_ocr
+                    or pre.page_class
+                    in (
+                        PageClass.SCANNED,
+                        PageClass.CHART_CANDIDATE,
+                        PageClass.MIXED,
+                        PageClass.BLANK,
+                    )
+                    or chart_kw
+                    or pre.run_vlm
+                )
+                if need_images:
+                    if not page_result.blocks:
+                        raw_imgs = page.get_images(full=True)
+                        images = (
+                            []
+                            if not raw_imgs
+                            else extract_page_images(
+                                page, page_num, max_edge=config.image_max_edge
+                            )
+                        )
                     else:
-                        images = extract_page_images(page, page_num, max_edge=config.image_max_edge)
+                        images = extract_page_images(
+                            page, page_num, max_edge=config.image_max_edge
+                        )
+                    decision = route_page(page_result, config.mode, images)
                 else:
-                    images = extract_page_images(page, page_num, max_edge=config.image_max_edge)
-
-                decision = route_page(page_result, config.mode, images)
+                    images = []
+                    decision = pre
 
                 ocr_blocks = None
                 table_blocks = None
@@ -164,15 +197,88 @@ def parse_pdf(
                     release_page_resources(images, ocr_blocks, table_blocks)
                     continue
 
+                from finreportparser.fusion.table_quality import (
+                    is_acceptable_table,
+                    score_table,
+                )
+                from finreportparser.fusion.table_repair import repair_table_gfm
+
+                def _accept_tables(
+                    extracts: list, *, source: str
+                ) -> list[PageBlock]:
+                    accepted: list[PageBlock] = []
+                    for extract in extracts:
+                        gfm_raw = extract if isinstance(extract, str) else extract.gfm
+                        if not gfm_raw or not str(gfm_raw).strip():
+                            continue
+                        if isinstance(extract, str):
+                            bbox = None
+                            html = None
+                        else:
+                            bbox = extract.bbox
+                            html = extract.html
+                        repair = repair_table_gfm(str(gfm_raw))
+                        gfm = repair.gfm
+                        if is_acceptable_table(gfm):
+                            accepted.append(
+                                PageBlock(
+                                    type=BlockType.TABLE,
+                                    text=gfm,
+                                    bbox=bbox,
+                                    metadata={
+                                        "table_source": source,
+                                        "table_repaired": repair.repaired,
+                                        "table_score": score_table(gfm),
+                                    },
+                                )
+                            )
+                    return accepted
+
+                # --- Zero-load path: text-layer tables (digital PDFs) ---
+                text_table_ok = False
+                if getattr(config, "prefer_text_tables", True) and not page_result.needs_ocr:
+                    try:
+                        from finreportparser.extract.text_tables import (
+                            extract_tables_from_page,
+                        )
+
+                        text_extracts = extract_tables_from_page(page)
+                        if text_extracts:
+                            table_blocks = _accept_tables(text_extracts, source="text_layer")
+                            if table_blocks:
+                                scores = [
+                                    (b.metadata or {}).get("table_score", 0.0)
+                                    for b in table_blocks
+                                ]
+                                min_score = float(
+                                    getattr(config, "text_table_min_score", 0.45)
+                                )
+                                text_table_ok = max(scores) >= min_score
+                                logger.debug(
+                                    "Page %d text-layer tables=%d max_score=%.2f ok=%s",
+                                    page_num,
+                                    len(table_blocks),
+                                    max(scores),
+                                    text_table_ok,
+                                )
+                    except Exception as e:
+                        logger.debug("Text-layer tables failed page %d: %s", page_num, e)
+
                 rendered_page_bytes = None
 
                 def get_rendered_page(_page=page):
                     nonlocal rendered_page_bytes
                     if rendered_page_bytes is None:
-                        rendered_page_bytes = render_full_page(_page, max_edge=config.image_max_edge)
+                        rendered_page_bytes = render_full_page(
+                            _page, max_edge=config.image_max_edge
+                        )
                     return rendered_page_bytes
 
-                if decision.run_ocr:
+                run_ocr = (
+                    decision.run_ocr
+                    and getattr(config, "allow_ocr", True)
+                )
+                if run_ocr:
                     try:
                         engine = _get_ocr_engine()
                         img_bytes = get_rendered_page()
@@ -185,7 +291,19 @@ def parse_pdf(
                     except Exception as e:
                         logger.warning("OCR failed on page %d: %s", page_num, e)
 
-                if decision.run_structure:
+                # Structure only when allowed AND (text tables weak OR forced quality)
+                need_structure = (
+                    decision.run_structure
+                    and getattr(config, "allow_structure", True)
+                )
+                if need_structure and getattr(config, "structure_only_if_text_weak", True):
+                    if text_table_ok:
+                        need_structure = False
+                        logger.debug(
+                            "Page %d skip structure (text tables sufficient)", page_num
+                        )
+
+                if need_structure:
                     try:
                         extractor = _get_structure_extractor()
                         img_bytes = get_rendered_page()
@@ -203,62 +321,21 @@ def parse_pdf(
                             else:
                                 extracts.append(item)
 
-                        from finreportparser.fusion.table_quality import (
-                            is_acceptable_table,
-                            score_table,
-                        )
-                        from finreportparser.fusion.table_repair import repair_table_gfm
-
-                        # Skip crop re-extract by default: full-page PPStructureV3
-                        # already returns tables; crop doubles RAM/time and OOM risk.
-                        # Always run generic table_repair (glued headers, OCR phrases,
-                        # column realign) before the quality gate.
-                        accepted_tables = []
-                        rejected_count = 0
-                        for extract in extracts:
-                            if not extract.gfm.strip():
-                                continue
-                            repair = repair_table_gfm(extract.gfm)
-                            gfm = repair.gfm
-                            if repair.repaired:
-                                logger.info(
-                                    "Repaired table on page %d: %s (score %.2f→%.2f)",
-                                    page_num,
-                                    ",".join(repair.actions),
-                                    score_table(extract.gfm),
-                                    score_table(gfm),
-                                )
-                            if is_acceptable_table(gfm):
-                                accepted_tables.append(
-                                    TableExtract(
-                                        gfm=gfm, bbox=extract.bbox, html=extract.html
-                                    )
-                                )
+                        struct_blocks = _accept_tables(extracts, source="structure")
+                        # Prefer structure tables if they score better / fill gaps
+                        if struct_blocks:
+                            if not table_blocks:
+                                table_blocks = struct_blocks
                             else:
-                                rejected_count += 1
-                                logger.debug(
-                                    "Rejected table on page %d score=%.2f",
-                                    page_num,
-                                    score_table(gfm),
+                                # Keep both if non-overlapping; else take higher-scoring set
+                                t_score = max(
+                                    (b.metadata or {}).get("table_score", 0) for b in table_blocks
                                 )
-
-                        if rejected_count > 0:
-                            logger.info(
-                                "Rejected %d low-quality tables on page %d",
-                                rejected_count,
-                                page_num,
-                            )
-
-                        if accepted_tables:
-                            table_blocks = [
-                                PageBlock(
-                                    type=BlockType.TABLE,
-                                    text=ext.gfm,
-                                    bbox=ext.bbox,
-                                    metadata={"table_repaired": True},
+                                s_score = max(
+                                    (b.metadata or {}).get("table_score", 0) for b in struct_blocks
                                 )
-                                for ext in accepted_tables
-                            ]
+                                if s_score >= t_score:
+                                    table_blocks = struct_blocks
                     except ImportError as e:
                         if "not installed" not in str(e):
                             raise
@@ -266,51 +343,84 @@ def parse_pdf(
                             f"{config.table_backend} not available, skipping structure extraction"
                         )
                     except Exception as e:
-                        logger.warning("Structure extraction failed on page %d: %s", page_num, e)
+                        logger.warning(
+                            "Structure extraction failed on page %d: %s", page_num, e
+                        )
 
-                if decision.run_vlm:
+                run_vlm = (
+                    decision.run_vlm
+                    and getattr(config, "allow_vlm", False)
+                    and config.vlm_backend != "none"
+                )
+                if run_vlm:
                     from finreportparser.vlm.chart_understanding import understand_chart
 
                     try:
                         vlm = _get_vlm()
+                        # Speed: skip tiny logos; process largest images first; cap count
+                        max_charts = int(getattr(config, "max_vlm_images", 4) or 4)
+                        min_area = 80 * 80
+                        candidates = []
                         for img in images:
-                            if img.bbox:
-                                img_bytes = img.image_bytes
-                                if img_bytes:
-                                    chart_meta = understand_chart(img_bytes, vlm)
-                                    if chart_meta:
-                                        chart_meta.bbox = img.bbox
+                            if not img.bbox or not img.image_bytes:
+                                continue
+                            area = max(
+                                0.0,
+                                (img.bbox.x1 - img.bbox.x0) * (img.bbox.y1 - img.bbox.y0),
+                            )
+                            if area < min_area:
+                                continue
+                            candidates.append((area, img))
+                        candidates.sort(key=lambda x: -x[0])
+                        candidates = candidates[:max_charts]
+
+                        for _area, img in candidates:
+                            img_bytes = img.image_bytes
+                            chart_meta = understand_chart(img_bytes, vlm)
+                            if not chart_meta:
+                                continue
+                            chart_meta.bbox = img.bbox
+                            page_result.blocks.append(
+                                PageBlock(
+                                    type=BlockType.CHART,
+                                    bbox=img.bbox,
+                                    text=chart_meta.description,
+                                    metadata={"chart_meta": chart_meta.model_dump()},
+                                )
+                            )
+
+                            # Mermaid only for framework/flowchart; pass type to skip re-classify
+                            ctype = (chart_meta.chart_type or "").lower()
+                            if ctype in ("framework", "flowchart") and vlm is not None:
+                                if hasattr(vlm, "diagram_to_mermaid_candidates"):
+                                    try:
+                                        mermaid_candidates = vlm.diagram_to_mermaid_candidates(
+                                            img_bytes, chart_type=ctype
+                                        )
+                                    except TypeError:
+                                        mermaid_candidates = vlm.diagram_to_mermaid_candidates(
+                                            img_bytes
+                                        )
+                                else:
+                                    mermaid_candidates = []
+                                for code in mermaid_candidates or []:
+                                    from finreportparser.fusion.mermaid import (
+                                        mermaid_or_fallback,
+                                    )
+
+                                    valid_code, fallback = mermaid_or_fallback(
+                                        code,
+                                        "Failed to generate valid Mermaid diagram.",
+                                    )
+                                    if valid_code:
                                         page_result.blocks.append(
                                             PageBlock(
-                                                type=BlockType.CHART,
+                                                type=BlockType.MERMAID,
                                                 bbox=img.bbox,
-                                                text=chart_meta.description,
-                                                metadata={"chart_meta": chart_meta.model_dump()},
+                                                text=valid_code,
+                                                metadata={"mermaid": valid_code},
                                             )
                                         )
-
-                                        if vlm and not chart_meta.description.startswith("["):
-                                            mermaid_candidates = vlm.diagram_to_mermaid_candidates(
-                                                img_bytes
-                                            )
-                                            for code in mermaid_candidates:
-                                                from finreportparser.fusion.mermaid import (
-                                                    mermaid_or_fallback,
-                                                )
-
-                                                valid_code, fallback = mermaid_or_fallback(
-                                                    code,
-                                                    "Failed to generate valid Mermaid diagram.",
-                                                )
-                                                if valid_code:
-                                                    page_result.blocks.append(
-                                                        PageBlock(
-                                                            type=BlockType.MERMAID,
-                                                            bbox=img.bbox,
-                                                            text=valid_code,
-                                                            metadata={"mermaid": valid_code},
-                                                        )
-                                                    )
                     except Exception as e:
                         logger.warning("VLM failed on page %d: %s", page_num, e)
 
@@ -337,6 +447,12 @@ def parse_pdf(
                     pass
 
     pages = cache_store.load_all_page_results()
+
+    # Drop headers/footers (geometry + patterns + cross-page repeats)
+    if getattr(config, "strip_headers_footers", True):
+        from finreportparser.fusion.headers_footers import filter_document_headers_footers
+
+        pages = filter_document_headers_footers(pages)
 
     # Second-pass table repair on cached/merged pages (covers resume + older caches)
     from finreportparser.fusion.table_repair import repair_table_gfm

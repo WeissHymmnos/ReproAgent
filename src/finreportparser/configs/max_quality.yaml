@@ -1,7 +1,7 @@
 mode: max-quality
-workers: 2
-table_backend: mineru
-vlm_backend: paddle_vl
+workers: 1
+table_backend: paddle
+vlm_backend: edge
 image_max_edge: 768
 resume: true
 out_dir: ./output
@@ -10,3 +10,11 @@ cache_dir: null
 model_dir: ~/.cache/finreportparser/models
 cpu_threads: 4
 enable_hpi: false
+max_vlm_images: 6
+prefer_text_tables: true
+allow_structure: true
+structure_only_if_text_weak: false
+allow_ocr: true
+allow_vlm: true
+strip_headers_footers: true
+text_table_min_score: 0.50

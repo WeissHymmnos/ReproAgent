@@ -27,10 +27,15 @@ app = typer.Typer(
 @app.command()
 def parse(
     input_pdf: str = typer.Argument(..., help="Path to the PDF file to parse."),
-    mode: str = typer.Option(
-        "balanced",
+    profile: str | None = typer.Option(
+        None,
+        "--profile",
+        help="Preset: lite | balanced | quality (aliases: fast, max-quality, hq).",
+    ),
+    mode: str | None = typer.Option(
+        None,
         "--mode",
-        help="Quality mode: fast | balanced | max-quality",
+        help="Quality mode: fast | balanced | max-quality (overrides profile mode).",
     ),
     out: str | None = typer.Option(
         None,
@@ -61,7 +66,7 @@ def parse(
         None,
         "--vlm-backend",
         help="VLM backend: none | paddle_vl | smolvlm | edge | llamacpp_http "
-        "(edge = SmolVLM-256M classify + OCR fusion, recommended)",
+        "(edge = SmolVLM-256M classify + OCR fusion)",
     ),
     formula_backend: str | None = typer.Option(
         None,
@@ -71,7 +76,7 @@ def parse(
     image_max_edge: int | None = typer.Option(
         None,
         "--image-max-edge",
-        help="Maximum edge length for rendered page images (512–768).",
+        help="Maximum edge length for rendered page images (512–1024).",
     ),
 ) -> None:
     """Parse a single PDF file into markdown and JSON."""
@@ -84,7 +89,13 @@ def parse(
         typer.echo(f"Error: file not found: {pdf_path}", err=True)
         raise typer.Exit(code=1)
 
-    overrides: dict = {"mode": mode}
+    overrides: dict = {}
+    if profile is not None:
+        overrides["profile"] = profile
+    elif mode is None:
+        overrides["profile"] = "balanced"
+    if mode is not None:
+        overrides["mode"] = mode
     if out is not None:
         overrides["out_dir"] = out
     if sidecar:
@@ -96,6 +107,7 @@ def parse(
         overrides["table_backend"] = table_backend
     if vlm_backend is not None:
         overrides["vlm_backend"] = vlm_backend
+        overrides["allow_vlm"] = vlm_backend != "none"
     if formula_backend is not None:
         overrides["formula_backend"] = formula_backend
     if image_max_edge is not None:
