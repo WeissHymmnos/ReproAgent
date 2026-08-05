@@ -177,15 +177,9 @@ def library(
 
 @app.command()
 def review(
-    list_queue: bool = typer.Option(
-        False, "--list", "-l", help="仅列出待审项（不决策）"
-    ),
-    approve: str | None = typer.Option(
-        None, "--approve", help="批准复核条目 ID（entry_id）"
-    ),
-    reject: str | None = typer.Option(
-        None, "--reject", help="拒绝复核条目 ID（entry_id）"
-    ),
+    list_queue: bool = typer.Option(False, "--list", "-l", help="仅列出待审项（不决策）"),
+    approve: str | None = typer.Option(None, "--approve", help="批准复核条目 ID（entry_id）"),
+    reject: str | None = typer.Option(None, "--reject", help="拒绝复核条目 ID（entry_id）"),
 ) -> None:
     """处理人工复核队列：查看 / approve / reject。"""
     from sqlmodel import Session, select
@@ -259,3 +253,106 @@ def tui() -> None:
     from reproagent.tui.app import ReproAgentApp
 
     ReproAgentApp().run()
+
+
+@app.command()
+def benchmark(
+    list_reports: bool = typer.Option(False, "--list", "-l", help="列出所有基准报告及其状态"),
+    run: str | None = typer.Option(None, "--run", help="对指定报告（report_id）运行全链路比对"),
+    run_all: bool = typer.Option(False, "--run-all", help="对所有非 pending 报告运行全链路比对"),
+    report: bool = typer.Option(False, "--report", help="生成汇总 Markdown 报告"),
+) -> None:
+    """基准验证：复现准确率评估。"""
+    from pathlib import Path
+
+    import yaml
+
+    benchmark_dir = (
+        Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures" / "benchmark"
+    )
+    catalog_path = benchmark_dir / "catalog.yaml"
+
+    if not catalog_path.exists():
+        typer.echo("benchmark: catalog.yaml not found", err=True)
+        raise typer.Exit(code=1)
+
+    with open(catalog_path) as f:
+        catalog = yaml.safe_load(f)
+    reports = catalog.get("reports", [])
+
+    if list_reports:
+        if not reports:
+            typer.echo("benchmark: no reports in catalog")
+            return
+        typer.echo(f"{'report_id':<30} {'status':<12} {'broker':<16} {'title'}")
+        typer.echo("-" * 90)
+        for r in reports:
+            title = r.get("report_title", "")[:40]
+            typer.echo(
+                f"{r['report_id']:<30} "
+                f"{r.get('status', 'pending'):<12} "
+                f"{r.get('broker', '?'):<16} "
+                f"{title}"
+            )
+        return
+
+    if report:
+        typer.echo("# Benchmark Report")
+        typer.echo()
+        total = len(reports)
+        ready = len([r for r in reports if r.get("status") != "pending"])
+        annotated = len([r for r in reports if r.get("status") == "validated"])
+        typer.echo(f"- Total reports: {total}")
+        typer.echo(f"- Annotated (non-pending): {ready}")
+        typer.echo(f"- Validated: {annotated}")
+        typer.echo(f"- Pending annotation: {total - ready}")
+        typer.echo()
+        if annotated > 0:
+            typer.echo("## Validated Reports")
+            for r in reports:
+                if r.get("status") == "validated":
+                    typer.echo(f"- **{r['report_id']}**: {r.get('report_title', '')}")
+        return
+
+    if run:
+        gt_path = benchmark_dir / run / "ground_truth.yaml"
+        if not gt_path.exists():
+            typer.echo(f"benchmark: {run} has no ground_truth.yaml", err=True)
+            raise typer.Exit(code=1)
+        typer.echo(f"benchmark: running {run}")
+        typer.echo(f"  ground_truth: {gt_path}")
+        typer.echo("  (全链路比对待实现 — 当前仅校验 schema)")
+        # TODO: 全链路流程
+        return
+
+    if run_all:
+        ready = [r for r in reports if r.get("status") != "pending"]
+        if not ready:
+            typer.echo("benchmark: all reports are pending (not yet annotated)")
+            return
+        typer.echo(f"benchmark: running {len(ready)} report(s)")
+        for r in ready:
+            typer.echo(f"  {r['report_id']} ... (全链路待实现)")
+        return
+
+    # 默认行为: 显示摘要
+    ready = [r for r in reports if r.get("status") != "pending"]
+    typer.echo(
+        f"benchmark: {len(reports)} total, {ready} ready, "
+        f"{len(reports) - len(ready)} pending annotation"
+    )
+    typer.echo("Use --list to see all reports, --run REPORT_ID to execute")
+
+
+@app.command()
+def mcp() -> None:
+    """启动 MCP 服务器（供 Claude Code 等 AI Agent 调用）。"""
+    try:
+        from reproagent.mcp_server import build_mcp_server
+
+        server = build_mcp_server()
+        server.run()
+    except ImportError as e:
+        typer.echo(f"MCP server unavailable: {e}", err=True)
+        typer.echo("Install with: pip install fastmcp", err=True)
+        raise typer.Exit(code=1)

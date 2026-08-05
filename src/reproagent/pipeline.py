@@ -242,9 +242,7 @@ def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Factor %s failed: %s", spec.factor_name, exc)
-            repository.enqueue_review(
-                report.id, f"Factor {spec.factor_name} failed: {exc}"
-            )
+            repository.enqueue_review(report.id, f"Factor {spec.factor_name} failed: {exc}")
             one = {
                 "factor_name": spec.factor_name,
                 "status": "error",

@@ -22,14 +22,15 @@ def test_department_header() -> None:
 
 def test_body_not_removed() -> None:
     body = (
-        "我们先对50余个转债相关的因子进行单独回测。"
-        "固收研究框架在正文中也会被讨论，但这是长段落。"
+        "我们先对50余个转债相关的因子进行单独回测。固收研究框架在正文中也会被讨论，但这是长段落。"
     )
     assert not is_header_footer_text(body)
 
 
 def test_strip_lines() -> None:
-    text = "固收研究\n正文内容在这里\n免责声明和披露以及分析师声明是报告的一部分，请务必一起阅读。 3"
+    text = (
+        "固收研究\n正文内容在这里\n免责声明和披露以及分析师声明是报告的一部分，请务必一起阅读。 3"
+    )
     out = strip_header_footer_lines(text)
     assert "固收研究" not in out
     assert "免责声明" not in out
@@ -81,7 +82,7 @@ def test_cross_page_repeat() -> None:
                     ),
                     PageBlock(
                         type=BlockType.TEXT,
-                        text=f"第{i+1}页独有正文段落内容足够长不会被误删。",
+                        text=f"第{i + 1}页独有正文段落内容足够长不会被误删。",
                         bbox=BBox(x0=50, y0=300, x1=500, y1=400),
                     ),
                 ],

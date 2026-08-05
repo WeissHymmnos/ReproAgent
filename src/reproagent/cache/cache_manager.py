@@ -44,9 +44,7 @@ class CacheManager:
         except Exception:
             return None
 
-    def get_cached_backtest(
-        self, cache_key: str, factor_id: str
-    ) -> BacktestResult | None:
+    def get_cached_backtest(self, cache_key: str, factor_id: str) -> BacktestResult | None:
         """命中 → 缓存回测结果；否则 None。"""
         entry_dir = self.paths.cache_entry_dir(cache_key)
 

@@ -1,0 +1,20 @@
+# 复现基准语料索引
+# 每篇研报的元数据和标注完整度
+
+reports:
+  - report_id: "cb-factor-investing"
+    broker: "未知"
+    report_date: "2024-01-01"  # 待确认
+    report_title: "转债量化手册：因子投资实践"
+    report_file: "../../../../【转债专题报告】转债量化手册：因子投资实践.pdf"
+    status: "pending"  # pending | annotated | validated
+    factor_count: 0  # 待标注
+    annotation_notes: "repo 根目录已有 PDF 和 Markdown 版本，待人工标注 ground truth"
+
+  - report_id: "minimal"
+    broker: "Mock"
+    report_date: "2023-01-01"
+    report_title: "Minimal Test Report"
+    report_file: "../sample_reports/minimal.pdf"
+    status: "annotated"
+    factor_count: 1

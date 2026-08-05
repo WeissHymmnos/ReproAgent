@@ -64,49 +64,61 @@ def test_compute_max_drawdown_known_value() -> None:
 
 
 def test_compute_ic_returns_dataframe_with_date_ic() -> None:
-    factor_values = pl.DataFrame({
-        "date": [date(2020, 1, 1), date(2020, 1, 1), date(2020, 1, 2), date(2020, 1, 2)],
-        "asset": ["A", "B", "A", "B"],
-        "factor_value": [0.1, 0.2, 0.3, 0.4],
-    })
-    forward_returns = pl.DataFrame({
-        "date": [date(2020, 1, 1), date(2020, 1, 1), date(2020, 1, 2), date(2020, 1, 2)],
-        "asset": ["A", "B", "A", "B"],
-        "forward_return": [0.01, 0.02, 0.03, 0.04],
-    })
+    factor_values = pl.DataFrame(
+        {
+            "date": [date(2020, 1, 1), date(2020, 1, 1), date(2020, 1, 2), date(2020, 1, 2)],
+            "asset": ["A", "B", "A", "B"],
+            "factor_value": [0.1, 0.2, 0.3, 0.4],
+        }
+    )
+    forward_returns = pl.DataFrame(
+        {
+            "date": [date(2020, 1, 1), date(2020, 1, 1), date(2020, 1, 2), date(2020, 1, 2)],
+            "asset": ["A", "B", "A", "B"],
+            "forward_return": [0.01, 0.02, 0.03, 0.04],
+        }
+    )
     ic_df = compute_ic(factor_values, forward_returns)
     assert set(ic_df.columns) == {"date", "ic"}
     assert len(ic_df) == 2
 
 
 def test_compute_ic_perfect_correlation() -> None:
-    factor_values = pl.DataFrame({
-        "date": [date(2020, 1, 1), date(2020, 1, 1)],
-        "asset": ["A", "B"],
-        "factor_value": [1.0, 2.0],
-    })
-    forward_returns = pl.DataFrame({
-        "date": [date(2020, 1, 1), date(2020, 1, 1)],
-        "asset": ["A", "B"],
-        "forward_return": [1.0, 2.0],
-    })
+    factor_values = pl.DataFrame(
+        {
+            "date": [date(2020, 1, 1), date(2020, 1, 1)],
+            "asset": ["A", "B"],
+            "factor_value": [1.0, 2.0],
+        }
+    )
+    forward_returns = pl.DataFrame(
+        {
+            "date": [date(2020, 1, 1), date(2020, 1, 1)],
+            "asset": ["A", "B"],
+            "forward_return": [1.0, 2.0],
+        }
+    )
     ic_df = compute_ic(factor_values, forward_returns)
     assert len(ic_df) == 1
     assert math.isclose(ic_df["ic"][0], 1.0, abs_tol=1e-6)
 
 
 def test_compute_group_returns_returns_dict() -> None:
-    grouped = pl.DataFrame({
-        "date": [date(2020, 1, 1), date(2020, 1, 1), date(2020, 1, 2), date(2020, 1, 2)],
-        "asset": ["A", "B", "A", "B"],
-        "factor_value": [0.1, 0.2, 0.3, 0.4],
-        "group": [0, 1, 0, 1],
-    })
-    returns = pl.DataFrame({
-        "date": [date(2020, 1, 1), date(2020, 1, 1), date(2020, 1, 2), date(2020, 1, 2)],
-        "asset": ["A", "B", "A", "B"],
-        "forward_return": [0.01, 0.02, 0.03, 0.04],
-    })
+    grouped = pl.DataFrame(
+        {
+            "date": [date(2020, 1, 1), date(2020, 1, 1), date(2020, 1, 2), date(2020, 1, 2)],
+            "asset": ["A", "B", "A", "B"],
+            "factor_value": [0.1, 0.2, 0.3, 0.4],
+            "group": [0, 1, 0, 1],
+        }
+    )
+    returns = pl.DataFrame(
+        {
+            "date": [date(2020, 1, 1), date(2020, 1, 1), date(2020, 1, 2), date(2020, 1, 2)],
+            "asset": ["A", "B", "A", "B"],
+            "forward_return": [0.01, 0.02, 0.03, 0.04],
+        }
+    )
     gr = compute_group_returns(grouped, returns, num_groups=2)
     assert isinstance(gr, dict)
     assert set(gr) == {0, 1}

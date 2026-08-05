@@ -254,9 +254,7 @@ class Repository:
     def save_reflection_step(self, step: ReflectionStep) -> ReflectionStep:
         state = self.get_reflection_state(step.state_id)
         if state is None:
-            raise PersistenceError(
-                f"save_reflection_step: state {step.state_id} not found"
-            )
+            raise PersistenceError(f"save_reflection_step: state {step.state_id} not found")
         existing_idx: int | None = None
         for idx, s in enumerate(state.steps):
             if s.id == step.id:
@@ -307,9 +305,7 @@ class Repository:
         with Session(self.engine) as session:
             row = session.get(ManualReviewQueueTable, entry_id)
             if row is None:
-                raise PersistenceError(
-                    f"update_review_status: entry {entry_id} not found"
-                )
+                raise PersistenceError(f"update_review_status: entry {entry_id} not found")
             row.status = status
             session.add(row)
             try:

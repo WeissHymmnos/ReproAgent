@@ -68,11 +68,7 @@ class SchemaValidator:
                         canonical_term=canonical,
                         confidence=confidence,
                         tag=tag,
-                        note=(
-                            "Auto-mapped"
-                            if confidence >= 0.8
-                            else "Fallback mapping"
-                        ),
+                        note=("Auto-mapped" if confidence >= 0.8 else "Fallback mapping"),
                     )
                 )
 

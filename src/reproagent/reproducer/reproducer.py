@@ -25,17 +25,18 @@ class FactorReproducer:
         """全流程：计算因子 → 回测 → 指标。"""
         if not config.factor_specs:
             from reproagent.exceptions import ReproductionError
+
             raise ReproductionError("No factor specs provided in config.")
-            
+
         spec = config.factor_specs[0]
         factor_def, factor_values = self.compute_factor(config, spec)
-        
+
         prices = self.data_loader.load_price_data(
             factor_def.universe,
             config.backtest_params.start_date,
             config.backtest_params.end_date,
         )
-        
+
         return self.backtester.run(
             factor_values=factor_values,
             params=config.backtest_params,
@@ -51,20 +52,35 @@ class FactorReproducer:
         """返回 (FactorDefinition, 因子值 DataFrame)。"""
         factor_def = self._build_factor_def(spec)
 
+        # 未来函数静态检测
+        from reproagent.reproducer.lookahead_detector import detect_lookahead
+
+        lookahead_report = detect_lookahead(spec.formula)
+        factor_def.lookahead_risk = lookahead_report.has_lookahead
+
         from reproagent.reproducer.evaluator_factory import build_evaluator
 
         engine = build_evaluator(config, settings=self.settings)
+
+        # 加载并清洗数据
+        raw_data = self.data_loader.load_price_data(
+            factor_def.universe,
+            config.backtest_params.start_date,
+            config.backtest_params.end_date,
+        )
+
+        from reproagent.reproducer.data_guards import DataGuardConfig, apply_guards
+
+        guard_config = DataGuardConfig()
+        cleaned_data, guard_stats = apply_guards(raw_data, guard_config)
+        factor_def.data_guard_applied = True
 
         factor_values = engine.compute(
             factor_def=factor_def,
             universe=factor_def.universe,
             start=config.backtest_params.start_date,
             end=config.backtest_params.end_date,
-            data=self.data_loader.load_price_data(
-                factor_def.universe,
-                config.backtest_params.start_date,
-                config.backtest_params.end_date,
-            ),
+            data=cleaned_data,
         )
 
         return factor_def, factor_values

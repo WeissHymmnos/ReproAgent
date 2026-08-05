@@ -1,0 +1,44 @@
+# 经典因子公式定义 — 用于引擎正确性自检
+# 这些因子在宽表面板上计算结果确定，可用于 CI 中逐点比对
+
+factors:
+  - name: "momentum_20d"
+    formula: "close / Ref(close, 20) - 1"
+    description: "20 日动量"
+    expected_sign: "negative"  # A 股反转效应
+
+  - name: "volume_ratio_20d"
+    formula: "volume / Mean(volume, 20)"
+    description: "20 日成交量比"
+
+  - name: "close_volatility_20d"
+    formula: "Std(close, 20) / Mean(close, 20)"
+    description: "20 日收盘价波动率"
+
+  - name: "turnover_rank"
+    formula: "Rank(volume)"
+    description: "成交量截面排名"
+
+  - name: "price_position"
+    formula: "(close - Ref(close, 20)) / (Max(close, 20) - Min(close, 20))"
+    description: "价格在 20 日区间内的位置"
+
+  - name: "cszscore_volatility"
+    formula: "CSZScore(Std(close, 20) / Mean(close, 20))"
+    description: "波动率的截面标准化"
+
+  - name: "delta_5d"
+    formula: "Delta(close, 5) / Ref(close, 5)"
+    description: "5 日价格变化率"
+
+  - name: "ref_1d_return"
+    formula: "close / Ref(close, 1) - 1"
+    description: "日度收益率"
+
+  - name: "abs_delta_10d"
+    formula: "Abs(Delta(close, 10)) / Ref(close, 10)"
+    description: "10 日绝对收益"
+
+  - name: "log_price_rank"
+    formula: "Rank(Log(close))"
+    description: "对数价格的截面排名"

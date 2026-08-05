@@ -115,9 +115,7 @@ class LLMExtractor:
                     content.append(
                         {
                             "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{encoded_page}"
-                            },
+                            "image_url": {"url": f"data:image/png;base64,{encoded_page}"},
                         }
                     )
 
@@ -158,9 +156,7 @@ class LLMExtractor:
             raise
         except Exception as e:
             if self.settings.mock_llm_allowed:
-                logger.warning(
-                    "Real LLM extraction failed: %s. Falling back to mock.", e
-                )
+                logger.warning("Real LLM extraction failed: %s. Falling back to mock.", e)
                 return [self._get_mock_spec()]
             raise LLMError(f"LLM extraction failed: {e}") from e
 
@@ -214,9 +210,7 @@ class LLMExtractor:
             raise
         except Exception as e:
             if self.settings.mock_llm_allowed:
-                logger.warning(
-                    "Real LLM revision failed: %s. Falling back to mock.", e
-                )
+                logger.warning("Real LLM revision failed: %s. Falling back to mock.", e)
                 revised = original_spec.model_copy(deep=True)
                 revised.formula = f"({revised.formula}) * 1.0"
                 return revised

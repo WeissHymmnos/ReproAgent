@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 
 class BacktestResult(BaseModel):
-    """一次回测的完整结果。"""
+    """一次回测的完整结果（含反过拟合检验）。"""
 
     id: str
     config_id: str
@@ -27,3 +27,16 @@ class BacktestResult(BaseModel):
     factor_values_path: Path  # parquet: date, asset, factor_value
     equity_curve_path: Path  # parquet: date, group_1..N, long_short
     computed_at: datetime
+    # Phase 2: 反过拟合检验字段
+    dsr: float | None = None  # Deflated Sharpe Ratio
+    dsr_pvalue: float | None = None
+    pbo: float | None = None  # Probability of Backtest Overfitting
+    min_btl: int | None = None  # Minimum Backtest Length
+    sharpe_ci_lower: float | None = None
+    sharpe_ci_upper: float | None = None
+    walk_forward_ic_oos: float | None = None  # 样本外 IC 均值
+    regime_ics: dict[str, float] = Field(default_factory=dict)  # 分市场环境 IC
+    placebo_pvalue: float | None = None  # 安慰剂检验 p 值
+    alpha_decay: dict[int, float] = Field(default_factory=dict)  # {lag_days: mean_rank_ic}
+    monotonicity: float | None = None  # 分组收益单调性 (Kendall tau)
+    half_life: float | None = None  # IC 半衰期（天）

@@ -32,3 +32,6 @@ class FactorDefinition(BaseModel):
     universe: str
     rebalance_frequency: str
     version: str = "0.1.0"  # semver
+    lookahead_risk: bool = False  # 是否检测到未来函数风险
+    data_guard_applied: bool = False  # 是否应用了数据口径守卫筛查
+    adjustment_type: str = "forward"  # 复权类型: forward / backward / none

@@ -23,9 +23,7 @@ def _make_spec(
         factor_name_cn="20日动量",
         description=description,
         formula="close / Ref(close, 20) - 1",
-        input_fields=[
-            FactorInputField(name="close", report_name="收盘价", data_type="price")
-        ],
+        input_fields=[FactorInputField(name="close", report_name="收盘价", data_type="price")],
         computation_steps=["pct_change(20)"],
         extraction_confidence=confidence,
         data_dict_mappings=mappings or [],

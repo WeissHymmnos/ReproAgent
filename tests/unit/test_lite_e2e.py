@@ -35,12 +35,7 @@ def test_lite_profile_parses_real_pdf_fast_and_clean(tmp_path: Path) -> None:
     doc = parse_pdf(_pdf(), cfg, out_dir=tmp_path, resume=False)
     assert len(doc.pages) == 36
 
-    tables = [
-        b
-        for p in doc.pages
-        for b in p.blocks
-        if b.type == BlockType.TABLE and b.text
-    ]
+    tables = [b for p in doc.pages for b in p.blocks if b.type == BlockType.TABLE and b.text]
     assert len(tables) >= 20
     # All lite tables must come from text layer (no structure engine)
     for b in tables:

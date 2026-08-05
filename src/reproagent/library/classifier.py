@@ -41,12 +41,7 @@ class StyleClassifier:
 
         force=True 时忽略已有 style，强制重分类。
         """
-        if (
-            not force
-            and factor.style
-            and factor.style != "other"
-            and factor.style in _VALID_STYLES
-        ):
+        if not force and factor.style and factor.style != "other" and factor.style in _VALID_STYLES:
             return factor.style
 
         text = (factor.name + " " + factor.name_cn + " " + factor.formula).lower()

@@ -14,7 +14,11 @@ from reproagent.reproducer.protocol import FactorReproducerProtocol
 
 
 class ReflectionLoopController:
-    """有界反思循环：max_iterations=3，连续 2 次无改善则 escalate。"""
+    """有界反思循环：max_iterations=3，连续 2 次无改善则 escalate。
+
+    集成跨报告经验记忆（ExperienceMemory），在反思 prompt 中注入
+    历史成功/失败模式。
+    """
 
     def __init__(
         self,
@@ -24,6 +28,7 @@ class ReflectionLoopController:
         config_builder: ConfigBuilder,
         tolerances: ToleranceConfig,
         repository: Repository,
+        experience_memory: object | None = None,
     ) -> None:
         self.reproducer = reproducer
         self.analyzer = analyzer
@@ -31,6 +36,7 @@ class ReflectionLoopController:
         self.config_builder = config_builder
         self.tolerances = tolerances
         self.repository = repository
+        self.experience_memory = experience_memory
 
     def run(
         self,
@@ -58,16 +64,11 @@ class ReflectionLoopController:
 
         current_config = initial_config
 
-        while (
-            state.current_iteration < state.max_iterations
-            and state.status == "in_progress"
-        ):
+        while state.current_iteration < state.max_iterations and state.status == "in_progress":
             result = self.reproducer.reproduce(current_config)
 
             deviation = self.analyzer.analyze(result, reported, self.tolerances)
-            deviation.root_cause = self.analyzer.classify_root_cause(
-                deviation, current_config
-            )
+            deviation.root_cause = self.analyzer.classify_root_cause(deviation, current_config)
 
             score = self._deviation_score(deviation)
 
@@ -116,9 +117,7 @@ class ReflectionLoopController:
                 break
 
             prompt = self._build_reflection_prompt(state, deviation)
-            revised_spec = self.llm_extractor.revise(
-                prompt, current_config.factor_specs[0]
-            )
+            revised_spec = self.llm_extractor.revise(prompt, current_config.factor_specs[0])
 
             current_config = current_config.model_copy(deep=True)
             current_config.factor_specs = [revised_spec]
@@ -165,6 +164,7 @@ class ReflectionLoopController:
         latest_deviation: DeviationReport,
     ) -> str:
         from reproagent.parser.prompts import REFLECTION_PROMPT
+
         return REFLECTION_PROMPT.render(
             original_spec=state.original_config.factor_specs[0],
             history=state.steps,

@@ -77,9 +77,7 @@ class ManualReviewScreen(Static):
 
             with Session(engine) as session:
                 pending = session.exec(
-                    select(ManualReviewQueueTable).where(
-                        ManualReviewQueueTable.status == "pending"
-                    )
+                    select(ManualReviewQueueTable).where(ManualReviewQueueTable.status == "pending")
                 ).all()
                 count = len(pending)
 
