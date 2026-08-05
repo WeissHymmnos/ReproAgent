@@ -1,163 +1,166 @@
 # ReproAgent
 
-研报因子自动复现系统：上传 PDF 卖方研报 → 解析因子定义 → 回测复现 → 偏差自愈 → 入因子库。
+> 卖方研报 → AI 解析 → 因子复现 → 偏差自愈 → 因子库
 
-PDF 布局解析由 vendored 的 [`finreportparser`](./src/finreportparser)（源自 finpdfpro）提供，作为唯一主 PDF 后端；
-非 PDF 逻辑按 [masterplan.md](./masterplan.md) 实现，数据后端对齐 aiminer（`local` / `ricequant` / `qlib`），
-并保留 `量化agent.zip` 原样旁路于 `legacy_quant`。
+ReproAgent 是一个面向中国 A 股市场的量化研报因子自动复现系统。
+上传 PDF 卖方研报，自动提取因子定义、计算因子值、回测验证、偏差诊断与自愈修复，最终沉淀为结构化因子库。
 
-## 要求
-
-- Python 3.12+
-- [uv](https://github.com/astral-sh/uv)（推荐）
-
-## 运行模式
-
-| `APP_ENV` | 行为 |
-|-----------|------|
-| `dev`（默认） | 无 `LLM_API_KEY` 时可用确定性 mock 因子；公式解析失败可降级 |
-| `prod` | **禁止** mock LLM；提取/修订失败直接报错；公式失败不静默退回 `close` |
-
-也可用 `ALLOW_MOCK_LLM` / `ALLOW_FORMULA_FALLBACK` 显式覆盖。  
-生产建议：
+## 快速开始
 
 ```bash
-APP_ENV=prod
-LLM_API_KEY=sk-...
-uv sync --extra dev --extra instructor
-```
-
-## 安装
-
-```bash
+# 安装
+git clone <repo-url> && cd reproagent
 uv sync --extra dev
-cp .env.example .env   # 填入 LLM_API_KEY 等（离线 mock 可留空；prod 必须配置）
+
+# 离线体验（无需 LLM API Key）
+OPENAI_API_KEY= ANTHROPIC_API_KEY= DATA_SOURCE=local \
+  uv run reproagent reproduce tests/fixtures/sample_reports/minimal.pdf
+
+# 生产模式
+cp .env.example .env   # 填入 LLM_API_KEY
+APP_ENV=prod uv run reproagent reproduce report.pdf
+
+# 浏览因子库
+uv run reproagent library --html
+
+# 启动 TUI
+uv run reproagent tui
 ```
 
-可选 extras：
+## 系统架构
 
-| extra | 说明 |
-|-------|------|
-| `ricequant` | 安装 `rqdatac`，启用 ricequant 数据后端 |
-| `qlib` | qlib 数据后端（需自行安装 `pyqlib`） |
-| `rqalpha` | rqalpha 评估引擎薄封装 |
-| `instructor` | LLM 结构化提取（OpenAI / Anthropic） |
-| `pdf-vision` | PDF 视觉处理（`pdf2image`） |
-| `tushare` | tushare 数据后端 |
-| `paddle` | PaddleOCR（finreportparser VLM 可选） |
-| `vlm` | 本地 VLM 后端（`transformers` + `torch`） |
-| `formula` | 公式 OCR（`pix2text`） |
+```
+                    ┌─────────────┐
+   PDF 研报 ──────→ │  Ingestion  │ 上传 / 校验 / 复核队列
+                    └──────┬──────┘
+                           ↓
+                    ┌─────────────┐
+                    │   Parser    │ finreportparser 布局提取
+                    │             │ LLM 结构化因子抽取
+                    └──────┬──────┘
+                           ↓
+                    ┌─────────────┐
+                    │ Reproducer  │ Polars 因子计算 (55+ 算子)
+                    │             │ 分组回测 + IC + 反过拟合
+                    └──────┬──────┘
+                           ↓
+                    ┌─────────────┐
+                    │  Deviation  │ 偏差对比 / 根因分类
+                    │             │ 反思循环 (≤3 次自愈)
+                    └──────┬──────┘
+                           ↓
+                    ┌─────────────┐
+                    │   Library   │ 去重入库 / 分类 / 版本化
+                    │             │ 经验记忆 / 衰减监控
+                    └─────────────┘
+```
+
+## 核心特性
+
+- **多后端 PDF 解析** — finreportparser (默认): 布局提取、表格修复、图表识别
+- **LLM 结构化提取** — OpenAI / Anthropic 视觉模型 + Pydantic Schema 约束输出
+- **55+ 因子算子** — Qlib 兼容表达式: Rank, CSZScore, Ref, Mean, Std, EMA, WMA, Ts_Rank, Corr, Cov 等
+- **因子引擎正确性** — AST 求值器 + 确定性参考值 CI 自检
+- **反过拟合套件** — DSR, PBO, MinBTL, Bootstrap Sharpe CI, Walk-Forward, 安慰剂检验, 子样本压力测试
+- **数据口径守卫** — ST/停牌/新股/涨跌停自动过滤, 未来函数 AST 检测
+- **反思自愈循环** — N≤3 有界迭代, 防震荡, 跨报告经验记忆
+- **CLI + TUI + MCP** — Typer 命令行, Textual 终端界面, FastMCP 8 工具 AI Agent 调用
+- **多数据源** — local (Parquet/CSV), RiceQuant, Tushare, Qlib
+- **全离线可跑** — 无 LLM/API 时可使用确定性 Mock 因子, 无需联网
+
+## CLI 命令
 
 ```bash
-uv sync --extra dev --extra ricequant --extra instructor
+reproagent ingest report.pdf           # 摄入研报
+reproagent reproduce report.pdf        # 端到端复现
+reproagent library                     # 列出因子库
+reproagent library --html              # 生成 HTML 仪表盘
+reproagent review --list               # 查看复核队列
+reproagent review --approve <id>       # 批准
+reproagent benchmark --list            # 基准语料列表
+reproagent benchmark --run <id>        # 运行基准验证
+reproagent mcp                         # 启动 MCP 服务器
+reproagent tui                         # 启动 TUI
 ```
 
-## PDF 后端：finreportparser（vendored）
+## 配置
 
-`src/finreportparser/` 是从 finpdfpro vendoring 而来的 PDF 布局解析包，
-作为 reproagent 唯一主 PDF 后端（`PARSER_BACKEND=finpdfpro`，默认值）。
-配置文件位于 `configs/{default,fast,max_quality}.yaml`，通过 `FINPDFPRO_MODE` 选择：
+| 环境变量 | 说明 | 默认值 |
+|----------|------|--------|
+| `APP_ENV` | `dev` 允许 mock LLM / `prod` 禁止 | `dev` |
+| `LLM_API_KEY` | LLM API Key（dev 可选，prod 必须） | — |
+| `LLM_PROVIDER` | `openai` 或 `anthropic` | `openai` |
+| `LLM_MODEL` | 模型名 | `gpt-4o` |
+| `PARSER_BACKEND` | PDF 后端 | `finpdfpro` |
+| `DATA_SOURCE` | `local` / `ricequant` / `tushare` / `qlib` | `local` |
+| `LOCAL_DATA_PATH` | 本地数据目录 | `tests/fixtures/test_data` |
 
-- `fast` — 快速模式
-- `balanced` — 默认均衡模式
-- `max-quality` — 最高质量模式
+详见 `.env.example` 和 `src/reproagent/settings.py`。
 
-`FINPDFPRO_VLM_BACKEND=none`（默认）不依赖 paddle/torch；设为 `paddle_vl` / `smolvlm` / `llamacpp_http` 启用 VLM 增强（需对应 extras）。
+## 安装选项
 
 ```bash
-uv run python -c "from finreportparser.config import load_config; print(load_config().mode)"
+uv sync --extra dev          # 开发工具
+uv sync --extra instructor   # LLM 结构化提取
+uv sync --extra ricequant    # 米筐数据后端
+uv sync --extra tushare      # Tushare 数据后端
+uv sync --extra paddle       # PaddleOCR
+uv sync --extra vlm          # 本地 VLM (transformers+torch)
 ```
 
-## 数据后端
-
-数据后端通过 `DATA_SOURCE` 选择，与 aiminer 对齐：
-
-| `DATA_SOURCE` | 说明 | 凭证 / 依赖 |
-|---------------|------|-------------|
-| `local` | 读取本地 parquet/csv（默认，离线可跑） | `LOCAL_DATA_PATH` 指向含 `prices.parquet` 的目录 |
-| `ricequant` | 米筐商业数据（lazy import `rqdatac`） | `RQ_TOKEN` / `RQ_USER` + `RQ_PASS`，需 `--extra ricequant` |
-| `qlib` | qlib 数据（lazy import） | `QLIB_CN_DATA_PATH`，需自行安装 `pyqlib` |
-| `tushare` | tushare | `TUSHARE_TOKEN`，需 `--extra tushare` |
-
-离线测试默认使用 `local` + `tests/fixtures/test_data/prices.parquet`。
-
-## legacy_quant 旁路模块
-
-`src/reproagent/legacy_quant/` 原样保留 `量化agent.zip` 的三文件（`factor_db` / `factor_research_pipeline` / `factor_library_dashboard`），
-改为相对导入，作为可运行的原型旁路。**core 业务路径不依赖 legacy_quant**。
+## 测试
 
 ```bash
-uv run python -m reproagent.legacy_quant   # seed demo + 生成 HTML 仪表盘到 /tmp
+make test                    # 全量测试
+make lint                    # Ruff 检查
+OPENAI_API_KEY= ANTHROPIC_API_KEY= uv run pytest -q  # 离线测试
 ```
 
-## CLI
+166 个测试, 0 skip, ~3.5s 完成。
 
-```bash
-reproagent --help
-reproagent ingest path/to/report.pdf
-reproagent reproduce path/to/report.pdf
-reproagent library                 # 列出因子库
-reproagent library --html          # 生成 HTML 仪表盘到 ~/.reproagent/wiki/
-reproagent review --list           # 列出待审项
-reproagent review                  # 查看队首 + 决策提示
-reproagent review --approve <id>   # 批准
-reproagent review --reject <id>    # 拒绝
-reproagent tui                     # 启动 Textual TUI
-```
-
-或：
-
-```bash
-python -m reproagent --help
-```
-
-### 离线 mock 示例（无需 LLM / 数据凭证）
-
-```bash
-# 摄入 fixture PDF（mock + local）
-OPENAI_API_KEY= ANTHROPIC_API_KEY= uv run reproagent ingest tests/fixtures/sample_reports/minimal.pdf
-
-# 离线全链路（mock LLM 提取 + local 数据回测）
-OPENAI_API_KEY= ANTHROPIC_API_KEY= \
-DATA_SOURCE=local \
-LOCAL_DATA_PATH=tests/fixtures/test_data \
-uv run reproagent reproduce tests/fixtures/sample_reports/minimal.pdf
-```
-
-无 `LLM_API_KEY` 时，`LLMExtractor` 自动回退到确定性 mock 因子规格，便于离线开发与 CI。
-
-## 包结构（摘要）
+## 项目结构
 
 ```
 src/
-  finreportparser/   # vendored PDF 布局解析后端（唯一主路径）
   reproagent/
-    models/          # Pydantic 领域模型
-    ingestion/       # 研报摄入 + 校验 + 复核队列
+    models/          # Pydantic 领域模型 (10 文件)
+    ingestion/       # 研报摄入、校验、复核队列
     parser/          # finpdfpro 布局 + LLM 结构化提取 + schema 校验
-    reproducer/      # 因子计算（polars）+ 回测 + 指标 + evaluator_factory
-    deviation/       # 偏差分析 + 根因 + 反思循环
-    library/         # 因子库 + 分类 + index/wiki + HTML 仪表盘
-    persistence/     # SQLModel + 路径约定
+    reproducer/      # 因子计算 (55+ 算子) + 回测 + 反过拟合 + 数据守卫
+    deviation/       # 偏差分析 + 根因分类 + 反思循环
+    library/         # 因子库管理 + 经验记忆 + 衰减监控
+    persistence/     # SQLModel 持久化
     cache/           # 文件系统缓存
-    tui/             # Textual 前端
-    legacy_quant/    # 量化agent.zip 旁路（原样保留）
+    tui/             # Textual 终端界面
+    agents/          # Multi-Agent 研究框架骨架
+    cli.py           # Typer CLI (8 命令)
     pipeline.py      # 端到端编排
-    cli.py           # Typer CLI
-configs/             # finreportparser YAML（default/fast/max_quality）
+    mcp_server.py    # FastMCP 服务器 (8 工具)
+    settings.py      # pydantic-settings 配置
+  finreportparser/   # Vendored PDF 布局解析后端
+tests/
+  conformance/       # 引擎正确性 + 引擎校验 + 基准语料
+  integration/       # E2E 管线
+  unit/              # 单元测试 (17 文件)
+  fixtures/          # 测试数据 + benchmark 语料 + 引擎验证参考值
+configs/             # finreportparser YAML 配置
 ```
 
-## 开发
+## 技术栈
 
-```bash
-make test
-make lint
-```
+| 层 | 选型 |
+|---|------|
+| 语言 | Python 3.12+ |
+| 包管理 | uv + pyproject.toml |
+| 数据模型 | Pydantic v2 |
+| 因子计算 | Polars (lazy API) |
+| 持久化 | SQLite via SQLModel |
+| LLM | OpenAI / Anthropic via instructor |
+| CLI | Typer + Rich |
+| TUI | Textual |
+| MCP | FastMCP |
+| 测试 | pytest |
 
-运行测试套件（离线，无需真实凭证）：
+## License
 
-```bash
-OPENAI_API_KEY= ANTHROPIC_API_KEY= uv run pytest -q
-```
-
-数据与元数据默认写在 `~/.reproagent/`（见 `Settings` / `AppPaths`）。
+MIT

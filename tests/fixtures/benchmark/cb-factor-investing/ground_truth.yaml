@@ -1,0 +1,25 @@
+# Ground truth for: 转债量化手册：因子投资实践
+# Status: pending — 待人工确认因子公式、参数和指标
+report_id: "cb-factor-investing"
+broker: "未知"
+report_date: "2024-01-01"
+report_title: "转债量化手册：因子投资实践"
+factors: []
+# 待标注，示例:
+# factors:
+#   - name: "debt_value"
+#     name_cn: "债性因子"
+#     formula: "YTM / Ref(YTM, 60)"
+#     formula_latex: ""
+#     input_fields: ["ytm"]
+#     rebalance_frequency: "monthly"
+#     universe: "全转债"
+#     lookback_window: 60
+#     parameters: {}
+#     reported_metrics:
+#       ic_mean: null
+#       ic_ir: null
+#       long_short_return: null
+#       sharpe_ratio: null
+#       max_drawdown: null
+#     annotation_notes: ""

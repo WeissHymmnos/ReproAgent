@@ -32,11 +32,13 @@ class RiceQuantEval:
             import rqalpha  # noqa: F401
         except ImportError:
             from reproagent.exceptions import ConfigurationError
+
             raise ConfigurationError(
                 "rqalpha is not installed. Please install with `pip install rqalpha`."
             )
-            
+
         # Fallback to PolarsEngine for now
         from reproagent.reproducer.polars_engine import PolarsEngine
+
         engine = PolarsEngine(self.config)
         return engine.compute(factor_def, universe, start, end, data)

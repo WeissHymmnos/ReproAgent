@@ -36,9 +36,7 @@ def validate_pdf(report: ResearchReport) -> ResearchReport:
             update={"validation_status": "invalid", "validation_errors": errors}
         )
 
-    return report.model_copy(
-        update={"validation_status": "valid", "validation_errors": errors}
-    )
+    return report.model_copy(update={"validation_status": "valid", "validation_errors": errors})
 
 
 def _only_warning(errors: list[str]) -> bool:

@@ -32,9 +32,7 @@ def test_load_config_profile_balanced_defaults() -> None:
 
 
 def test_cli_override_beats_profile() -> None:
-    cfg = load_config(
-        overrides={"profile": "lite", "allow_structure": True, "mode": "balanced"}
-    )
+    cfg = load_config(overrides={"profile": "lite", "allow_structure": True, "mode": "balanced"})
     assert cfg.mode == "balanced"
     assert cfg.allow_structure is True
 

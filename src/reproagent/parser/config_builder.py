@@ -43,7 +43,7 @@ class ConfigBuilder:
         report_dir = self.settings.reports_dir / report.id
         report_dir.mkdir(parents=True, exist_ok=True)
         config_path = report_dir / "config.yaml"
-        
+
         with open(config_path, "w", encoding="utf-8") as f:
             yaml.dump(config.model_dump(mode="json"), f, allow_unicode=True, sort_keys=False)
 

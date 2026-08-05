@@ -1,0 +1,22 @@
+report_id: "minimal"
+broker: "Mock"
+report_date: "2023-01-01"
+report_title: "Minimal Test Report"
+factors:
+  - name: "mock_momentum"
+    name_cn: "模拟动量因子"
+    formula: "close / Ref(close, 20) - 1"
+    formula_latex: ""
+    input_fields: ["close"]
+    rebalance_frequency: "monthly"
+    universe: "全A股"
+    lookback_window: 20
+    parameters:
+      momentum_period: 20
+    reported_metrics:
+      ic_mean: 0.05
+      ic_ir: 0.5
+      long_short_return: 0.15
+      sharpe_ratio: 1.0
+      max_drawdown: 0.1
+    annotation_notes: "Mock factor from LLMExtractor._get_mock_spec()"

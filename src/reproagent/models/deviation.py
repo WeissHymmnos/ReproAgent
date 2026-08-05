@@ -26,6 +26,12 @@ class ToleranceConfig(BaseModel):
     long_short_return_rel: float = 0.15
     sharpe_abs: float = 0.3
     max_drawdown_abs: float = 0.05
+    # Phase 2: 反过拟合门控阈值
+    min_dsr: float = -1.0  # 最低可接受 DSR
+    max_pbo: float = 0.3  # 最大可接受 PBO
+    min_sharpe_ci_lower: float = 0.0  # Sharpe CI 下界 > 0
+    min_walk_forward_ic: float = 0.0  # 样本外 IC > 0
+    require_placebo_significant: bool = True  # 安慰剂检验显著
 
 
 class DeviationReport(BaseModel):
