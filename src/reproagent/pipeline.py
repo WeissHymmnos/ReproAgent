@@ -85,48 +85,60 @@ def _process_one_factor(
     deviation = analyzer.analyze(result, reported, tolerances)
     deviation.root_cause = analyzer.classify_root_cause(deviation, factor_config)
 
+    from reproagent.reproducer.health import is_healthy_reproduction
+
     if deviation.passed:
-        factor_def, _ = reproducer.compute_factor(factor_config, spec)
-        entry = FactorLibraryEntry(
-            id=uuid.uuid4().hex,
-            factor=factor_def,
-            report_id=report.id,
-            config_id=factor_config.id,
-            backtest_result_id=result.id,
-            deviation_passed=True,
-            version="1.0.0",
-            dedup_hash=compute_dedup_hash(factor_def),
-            created_at=datetime.now(UTC),
-        )
-        saved = library_manager.register(entry)
-        if experience_memory is not None:
-            try:
-                experience_memory.record_success(
-                    formula=spec.formula,
-                    input_fields=input_fields,
-                    style=factor_def.style,
-                    ic=float(result.ic_mean or 0.0),
-                    report_id=report.id,
-                )
-                for m in spec.data_dict_mappings or []:
-                    experience_memory.learn_term_mapping(
-                        m.report_term, m.canonical_term, m.confidence
+        factor_def, factor_vals = reproducer.compute_factor(factor_config, spec)
+        # 因子值必须可用：null-factor / 空面板不能入库
+        if not is_healthy_reproduction(result, factor_values=factor_vals):
+            deviation = deviation.model_copy(
+                update={
+                    "passed": False,
+                    "recommend_reflect": True,
+                    "root_cause_detail": "factor_values_unusable_or_degenerate_metrics",
+                }
+            )
+        else:
+            entry = FactorLibraryEntry(
+                id=uuid.uuid4().hex,
+                factor=factor_def,
+                report_id=report.id,
+                config_id=factor_config.id,
+                backtest_result_id=result.id,
+                deviation_passed=True,
+                version="1.0.0",
+                dedup_hash=compute_dedup_hash(factor_def),
+                created_at=datetime.now(UTC),
+            )
+            saved = library_manager.register(entry)
+            if experience_memory is not None:
+                try:
+                    experience_memory.record_success(
+                        formula=spec.formula,
+                        input_fields=input_fields,
+                        style=factor_def.style,
+                        ic=float(result.ic_mean or 0.0),
+                        report_id=report.id,
                     )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("ExperienceMemory.record_success failed: %s", exc)
-        return {
-            "factor_name": factor_name,
-            "status": "passed",
-            "factor_id": saved.id,
-            "backtest_result_id": result.id,
-            "metrics": {
-                "ic_mean": result.ic_mean,
-                "ic_ir": result.ic_ir,
-                "sharpe_ratio": result.sharpe_ratio,
-                "max_drawdown": result.max_drawdown,
-                "long_short_annual_return": result.long_short_annual_return,
-            },
-        }
+                    for m in spec.data_dict_mappings or []:
+                        experience_memory.learn_term_mapping(
+                            m.report_term, m.canonical_term, m.confidence
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("ExperienceMemory.record_success failed: %s", exc)
+            return {
+                "factor_name": factor_name,
+                "status": "passed",
+                "factor_id": saved.id,
+                "backtest_result_id": result.id,
+                "metrics": {
+                    "ic_mean": result.ic_mean,
+                    "ic_ir": result.ic_ir,
+                    "sharpe_ratio": result.sharpe_ratio,
+                    "max_drawdown": result.max_drawdown,
+                    "long_short_annual_return": result.long_short_annual_return,
+                },
+            }
 
     state = reflection_controller.run(factor_config, reported)
     if state.status == "converged":
@@ -220,15 +232,6 @@ def _process_one_factor(
     }
 
 
-def _finite(x: object) -> bool:
-    import math
-
-    try:
-        return x is not None and math.isfinite(float(x))  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return False
-
-
 def _try_soft_pass_after_reflection(
     *,
     state: Any,
@@ -242,12 +245,16 @@ def _try_soft_pass_after_reflection(
     experience_memory: Any,
     logger: Any,
 ) -> dict[str, Any] | None:
-    """当数值偏差无法对齐但复现结果健康时，登记为 passed（soft）。"""
+    """当数值偏差无法对齐但复现结果健康时，登记为 passed（soft）。
+
+    硬条件：因子值非空且非常数 + 指标非全零退化。0.0 IC 单独不算健康。
+    """
     import uuid
     from datetime import UTC, datetime
 
     from reproagent.library.versioning import compute_dedup_hash
     from reproagent.models.library import FactorLibraryEntry
+    from reproagent.reproducer.health import is_healthy_reproduction
 
     # 优先用反思过程中最优一步的健康度，否则用首次回测
     cand = result
@@ -257,23 +264,21 @@ def _try_soft_pass_after_reflection(
         if best_step is not None and best_step.revised_config.factor_specs:
             cfg = best_step.revised_config
 
-    # 必须有有限 IC 或有限夏普，说明因子值与收益序列可算
-    if not (
-        _finite(getattr(cand, "ic_mean", None))
-        or _finite(getattr(cand, "sharpe_ratio", None))
-        or _finite(getattr(cand, "long_short_annual_return", None))
-    ):
+    if not is_healthy_reproduction(cand):
         return None
 
     cause = getattr(deviation, "root_cause", None)
     cause_s = cause.value if hasattr(cause, "value") else str(cause or "")
-    # lookahead 硬拦截；formula_error 若已有有限 IC（公式 fallback 生效）仍可 soft-pass
+    # lookahead 硬拦截
     if cause_s == "lookahead_bias":
         return None
 
     try:
         use_spec = cfg.factor_specs[0] if cfg.factor_specs else spec
-        factor_def, _ = reproducer.compute_factor(cfg, use_spec)
+        factor_def, factor_vals = reproducer.compute_factor(cfg, use_spec)
+        # 再次确认当前配置算出的因子值可用（避免 null-factor 假通过）
+        if not is_healthy_reproduction(cand, factor_values=factor_vals):
+            return None
         entry = FactorLibraryEntry(
             id=uuid.uuid4().hex,
             factor=factor_def,

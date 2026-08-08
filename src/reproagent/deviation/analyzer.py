@@ -53,7 +53,17 @@ class DeviationAnalyzer:
             metric_deviations["max_drawdown"] = delta
             passed_flags.append(abs(delta) <= tolerances.max_drawdown_abs)
 
-        passed = all(passed_flags) if passed_flags else True
+        # 无研报对照指标时，不能 vacuous pass：必须因子值可用且指标非全零退化
+        from reproagent.reproducer.health import is_healthy_reproduction
+
+        healthy = is_healthy_reproduction(reproduced)
+        if passed_flags:
+            passed = all(passed_flags) and healthy
+        else:
+            # no-GT 路径：健康复现即通过
+            passed = healthy
+            if not healthy:
+                metric_deviations["reproduction_health"] = 0.0
 
         return DeviationReport(
             id=uuid4().hex,
@@ -63,7 +73,9 @@ class DeviationAnalyzer:
             metric_deviations=metric_deviations,
             tolerances=tolerances,
             root_cause=RootCause.UNKNOWN,
-            root_cause_detail="",
+            root_cause_detail="" if passed else (
+                "" if passed_flags else "unhealthy_or_degenerate_reproduction"
+            ),
             recommend_reflect=not passed,
         )
 

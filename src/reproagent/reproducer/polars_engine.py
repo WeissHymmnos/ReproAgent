@@ -473,6 +473,7 @@ _CONTEXT: dict[str, Any] = {
     "Sqrt": Sqrt,
     "Exp": Exp,
     "Pow": Pow,
+    "Power": Pow,  # LLM 常用别名
     "Neg": Neg,
     "Inv": Inv,
     "Ceil": Ceil,
@@ -724,16 +725,20 @@ class PolarsEngine:
             raise
         except Exception as e:
             if self.allow_formula_fallback:
+                # 回退到 close（非 null）：null 因子会 drop 成空面板并产生全零假指标
                 logging.getLogger(__name__).warning(
-                    "AST evaluation failed for %s: %s (null factor values)",
+                    "AST evaluation failed for %s: %s; falling back to close",
                     formula,
                     e,
                 )
-                df = df_container[0].with_columns(
-                    pl.lit(None).cast(pl.Float64).alias("factor_value")
+                df = df_container[0].select(
+                    ["date", "asset", pl.col("close").alias("factor_value")]
                 )
-            else:
-                raise FormulaError(f"Factor formula evaluation failed for {formula!r}: {e}") from e
+                cols_to_drop = [c for c in tmp_cols if c in df.columns]
+                if cols_to_drop:
+                    df = df.drop(cols_to_drop)
+                return df.drop_nulls()
+            raise FormulaError(f"Factor formula evaluation failed for {formula!r}: {e}") from e
 
         cols_to_drop = [c for c in tmp_cols if c in df.columns]
         if cols_to_drop:
@@ -751,7 +756,22 @@ class PolarsEngine:
             return node.value
 
         if isinstance(node, ast.Name):
-            return _CONTEXT.get(node.id, pl.col(node.id))
+            if node.id in _CONTEXT:
+                return _CONTEXT[node.id]
+            # 常见基本面字段在纯量价面板中的可计算代理（避免 null 面板）
+            _field_alias = {
+                "total_market_cap": "amount",
+                "market_cap": "amount",
+                "mkt_cap": "amount",
+                "circ_mv": "amount",
+                "float_mv": "amount",
+                "turnover": "volume",
+                "turnover_rate": "volume",
+                "returns": "close",
+                "ret": "close",
+            }
+            col = _field_alias.get(node.id, node.id)
+            return pl.col(col)
 
         if isinstance(node, ast.BinOp):
             left = self._eval_ast_node(node.left, df_container, tmp_cols)

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+
+import polars as pl
+import pytest
 
 from reproagent.deviation.analyzer import DeviationAnalyzer
 from reproagent.models.backtest import BacktestResult
@@ -13,28 +16,63 @@ from reproagent.models.replication import BacktestParams, ReplicationConfig
 from reproagent.models.report import ReportedMetrics
 
 
+@pytest.fixture(scope="module")
+def _fv_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Usable factor-value parquet for health gate (non-empty, non-constant)."""
+    root = tmp_path_factory.mktemp("fv")
+    path = root / "fv.parquet"
+    rows = []
+    for i in range(30):
+        d = date(2020, 1, 1) + timedelta(days=i)
+        for j, asset in enumerate(["a", "b", "c"]):
+            rows.append({"date": d, "asset": asset, "factor_value": float(i + j)})
+    pl.DataFrame(rows).write_parquet(path)
+    return path
+
+
 def _backtest_result(
     ic_mean: float = 0.05,
     ic_ir: float = 0.5,
     long_short_annual_return: float = 0.15,
     sharpe_ratio: float = 1.0,
     max_drawdown: float = 0.1,
+    *,
+    factor_values_path: Path | None = None,
+    turnover: float = 0.1,
+    groups: dict[int, float] | None = None,
 ) -> BacktestResult:
+    # module-level path set by fixture via autouse alternative: caller must pass path
+    fv = factor_values_path
+    if fv is None:
+        # fallback for tests that don't inject — create ephemeral usable file
+        import tempfile
+
+        tmp = Path(tempfile.mkdtemp()) / "fv.parquet"
+        rows = [
+            {
+                "date": date(2020, 1, 1) + timedelta(days=i),
+                "asset": "a",
+                "factor_value": float(i),
+            }
+            for i in range(20)
+        ]
+        pl.DataFrame(rows).write_parquet(tmp)
+        fv = tmp
     return BacktestResult(
         id="bt-1",
         config_id="cfg-1",
         factor_id="f-1",
         engine="polars",
-        start_date=__import__("datetime").date(2020, 1, 1),
-        end_date=__import__("datetime").date(2024, 12, 31),
-        group_annualized_returns={0: -0.02, 1: 0.01, 2: 0.05},
+        start_date=date(2020, 1, 1),
+        end_date=date(2024, 12, 31),
+        group_annualized_returns=groups if groups is not None else {0: -0.02, 1: 0.01, 2: 0.05},
         ic_mean=ic_mean,
         ic_ir=ic_ir,
         long_short_annual_return=long_short_annual_return,
         sharpe_ratio=sharpe_ratio,
         max_drawdown=max_drawdown,
-        turnover=0.1,
-        factor_values_path=Path("/tmp/fv.parquet"),
+        turnover=turnover,
+        factor_values_path=fv,
         equity_curve_path=Path("/tmp/eq.parquet"),
         computed_at=datetime.now(UTC),
     )
@@ -119,7 +157,30 @@ def test_analyze_no_reported_metrics_passes() -> None:
     tol = ToleranceConfig()
     report = DeviationAnalyzer().analyze(reproduced, reported, tol)
     assert report.passed is True
-    assert report.metric_deviations == {}
+
+
+def test_analyze_no_reported_metrics_rejects_all_zero_degenerate() -> None:
+    """空因子/全零指标不能 vacuous pass。"""
+    import tempfile
+
+    empty_path = Path(tempfile.mkdtemp()) / "empty.parquet"
+    pl.DataFrame(
+        schema={"date": pl.Date, "asset": pl.Utf8, "factor_value": pl.Float64}
+    ).write_parquet(empty_path)
+    reproduced = _backtest_result(
+        ic_mean=0.0,
+        ic_ir=0.0,
+        long_short_annual_return=0.0,
+        sharpe_ratio=0.0,
+        max_drawdown=0.0,
+        turnover=0.0,
+        groups={},
+        factor_values_path=empty_path,
+    )
+    reported = ReportedMetrics()
+    report = DeviationAnalyzer().analyze(reproduced, reported, ToleranceConfig())
+    assert report.passed is False
+    assert report.recommend_reflect is True
 
 
 def test_analyze_long_short_relative_tolerance() -> None:
