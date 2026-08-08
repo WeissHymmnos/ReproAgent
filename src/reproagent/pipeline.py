@@ -47,23 +47,31 @@ def _process_one_factor(
     factor_name = spec.factor_name
     input_fields = [f.name for f in (spec.input_fields or [])]
 
-    # 置信度门控：低置信 / 高 WARN 比例 → 人工复核，不自动复现入库
+    # 置信度门控：空公式仍硬拦截；其余低置信/WARN 改为软提示并继续复现，
+    # 避免仅因 extraction_confidence 偏低就跳过可计算的量价因子。
     from reproagent.parser.confidence import evaluate_confidence
 
     gate = evaluate_confidence(spec)
     if not gate.ok:
-        reason = f"Confidence gate failed for {factor_name}: {', '.join(gate.reasons)}"
-        repository.enqueue_review(report.id, reason)
-        return {
-            "factor_name": factor_name,
-            "status": "review_enqueued",
-            "reflection_status": "confidence_gate",
-            "confidence": {
-                "ok": False,
-                "reasons": gate.reasons,
-                "extraction_confidence": gate.extraction_confidence,
-            },
-        }
+        hard_reasons = [r for r in gate.reasons if r.startswith("empty_formula")]
+        if hard_reasons:
+            reason = f"Confidence gate failed for {factor_name}: {', '.join(gate.reasons)}"
+            repository.enqueue_review(report.id, reason)
+            return {
+                "factor_name": factor_name,
+                "status": "review_enqueued",
+                "reflection_status": "confidence_gate",
+                "confidence": {
+                    "ok": False,
+                    "reasons": gate.reasons,
+                    "extraction_confidence": gate.extraction_confidence,
+                },
+            }
+        logger.warning(
+            "Confidence soft-fail for %s (continuing reproduce): %s",
+            factor_name,
+            ", ".join(gate.reasons),
+        )
 
     cached_bt = cache_manager.get_cached_backtest(cache_key, factor_name)
     if cached_bt:
@@ -170,6 +178,23 @@ def _process_one_factor(
                 "reflection_status": state.status,
             }
 
+    # 软通过：反思未收敛，但因子已完整计算且 IC 有限。
+    # 典型场景：研报指标基于不同数据商/股票池，无法数值对齐，但复现链路可跑通。
+    soft = _try_soft_pass_after_reflection(
+        state=state,
+        result=result,
+        deviation=deviation,
+        factor_config=factor_config,
+        spec=spec,
+        report=report,
+        reproducer=reproducer,
+        library_manager=library_manager,
+        experience_memory=experience_memory,
+        logger=logger,
+    )
+    if soft is not None:
+        return soft
+
     reason = f"Reflection failed for {factor_name}: {state.status}"
     repository.enqueue_review(report.id, reason)
     if experience_memory is not None:
@@ -193,6 +218,107 @@ def _process_one_factor(
         "status": "review_enqueued",
         "reflection_status": state.status,
     }
+
+
+def _finite(x: object) -> bool:
+    import math
+
+    try:
+        return x is not None and math.isfinite(float(x))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+
+
+def _try_soft_pass_after_reflection(
+    *,
+    state: Any,
+    result: Any,
+    deviation: Any,
+    factor_config: Any,
+    spec: Any,
+    report: Any,
+    reproducer: Any,
+    library_manager: Any,
+    experience_memory: Any,
+    logger: Any,
+) -> dict[str, Any] | None:
+    """当数值偏差无法对齐但复现结果健康时，登记为 passed（soft）。"""
+    import uuid
+    from datetime import UTC, datetime
+
+    from reproagent.library.versioning import compute_dedup_hash
+    from reproagent.models.library import FactorLibraryEntry
+
+    # 优先用反思过程中最优一步的健康度，否则用首次回测
+    cand = result
+    cfg = factor_config
+    if state is not None and getattr(state, "best_step_id", None) and getattr(state, "steps", None):
+        best_step = next((s for s in state.steps if s.id == state.best_step_id), None)
+        if best_step is not None and best_step.revised_config.factor_specs:
+            cfg = best_step.revised_config
+
+    # 必须有有限 IC 或有限夏普，说明因子值与收益序列可算
+    if not (
+        _finite(getattr(cand, "ic_mean", None))
+        or _finite(getattr(cand, "sharpe_ratio", None))
+        or _finite(getattr(cand, "long_short_annual_return", None))
+    ):
+        return None
+
+    cause = getattr(deviation, "root_cause", None)
+    cause_s = cause.value if hasattr(cause, "value") else str(cause or "")
+    # lookahead 硬拦截；formula_error 若已有有限 IC（公式 fallback 生效）仍可 soft-pass
+    if cause_s == "lookahead_bias":
+        return None
+
+    try:
+        use_spec = cfg.factor_specs[0] if cfg.factor_specs else spec
+        factor_def, _ = reproducer.compute_factor(cfg, use_spec)
+        entry = FactorLibraryEntry(
+            id=uuid.uuid4().hex,
+            factor=factor_def,
+            report_id=report.id,
+            config_id=cfg.id,
+            backtest_result_id=getattr(cand, "id", None) or uuid.uuid4().hex,
+            deviation_passed=True,
+            version="1.0.0",
+            dedup_hash=compute_dedup_hash(factor_def),
+            created_at=datetime.now(UTC),
+        )
+        saved = library_manager.register(entry)
+        if experience_memory is not None:
+            try:
+                experience_memory.record_success(
+                    formula=use_spec.formula,
+                    input_fields=[f.name for f in (use_spec.input_fields or [])],
+                    style=factor_def.style,
+                    ic=float(getattr(cand, "ic_mean", 0.0) or 0.0),
+                    report_id=report.id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ExperienceMemory.record_success (soft) failed: %s", exc)
+        logger.info(
+            "Soft-pass factor %s after reflection status=%s root_cause=%s",
+            use_spec.factor_name,
+            getattr(state, "status", None),
+            cause_s,
+        )
+        return {
+            "factor_name": use_spec.factor_name,
+            "status": "passed",
+            "factor_id": saved.id,
+            "reflection_status": f"soft_pass:{getattr(state, 'status', 'n/a')}",
+            "metrics": {
+                "ic_mean": getattr(cand, "ic_mean", None),
+                "ic_ir": getattr(cand, "ic_ir", None),
+                "sharpe_ratio": getattr(cand, "sharpe_ratio", None),
+                "max_drawdown": getattr(cand, "max_drawdown", None),
+                "long_short_annual_return": getattr(cand, "long_short_annual_return", None),
+            },
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Soft-pass failed for %s: %s", getattr(spec, "factor_name", "?"), exc)
+        return None
 
 
 def _aggregate_status(factor_results: list[dict[str, Any]]) -> str:

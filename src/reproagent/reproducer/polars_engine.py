@@ -768,6 +768,16 @@ class PolarsEngine:
                 return left**right
             raise ValueError(f"Unsupported binop: {type(node.op)}")
 
+        if isinstance(node, ast.UnaryOp):
+            operand = self._eval_ast_node(node.operand, df_container, tmp_cols)
+            if isinstance(node.op, ast.UAdd):
+                return operand
+            if isinstance(node.op, ast.USub):
+                return -operand
+            if isinstance(node.op, ast.Not):
+                return ~operand if isinstance(operand, pl.Expr) else (not operand)
+            raise ValueError(f"Unsupported unaryop: {type(node.op)}")
+
         if isinstance(node, ast.Call):
             func_name = node.func.id if isinstance(node.func, ast.Name) else None
             func = _CONTEXT.get(func_name) if func_name else None
