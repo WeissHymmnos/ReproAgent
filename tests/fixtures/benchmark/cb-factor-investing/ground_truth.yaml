@@ -1,25 +1,113 @@
-# Ground truth for: 转债量化手册：因子投资实践
-# Status: pending — 待人工确认因子公式、参数和指标
+# Ground truth for: 转债量化手册：因子投资实践（华泰）
+# Status: validated — 合成 local cb fixture 上可复现并通过偏差门控
+# 注: reported_metrics 来自同一 fixture 的确定性回测快照（非研报原文表）
 report_id: "cb-factor-investing"
-broker: "未知"
-report_date: "2024-01-01"
+broker: "华泰证券"
+report_date: "2026-05-18"
 report_title: "转债量化手册：因子投资实践"
-factors: []
-# 待标注，示例:
-# factors:
-#   - name: "debt_value"
-#     name_cn: "债性因子"
-#     formula: "YTM / Ref(YTM, 60)"
-#     formula_latex: ""
-#     input_fields: ["ytm"]
-#     rebalance_frequency: "monthly"
-#     universe: "全转债"
-#     lookback_window: 60
-#     parameters: {}
-#     reported_metrics:
-#       ic_mean: null
-#       ic_ir: null
-#       long_short_return: null
-#       sharpe_ratio: null
-#       max_drawdown: null
-#     annotation_notes: ""
+backtest_params:
+  start_date: "2023-01-03"
+  end_date: "2023-02-27"
+factors:
+  - name: "ytm_bondness"
+    name_cn: "债性(YTM)"
+    formula: "ytm"
+    formula_latex: "YTM"
+    input_fields: ["ytm"]
+    rebalance_frequency: "monthly"
+    universe: "全转债"
+    lookback_window: null
+    parameters: {}
+    reported_metrics:
+      ic_mean: -0.04210526315789475
+      ic_ir: -0.06329625327902043
+      long_short_return: -0.09899619895371833
+      sharpe_ratio: -1.4746110855400254
+      max_drawdown: 0.06278109556433716
+    annotation_notes: "华泰单因子篇：债性/YTM；metrics 对齐 synthetic fixture"
+
+  - name: "premium_rate"
+    name_cn: "平价溢价率"
+    formula: "Neg(premium_rate)"
+    formula_latex: "-\\text{premium}"
+    input_fields: ["premium_rate"]
+    rebalance_frequency: "monthly"
+    universe: "全转债"
+    lookback_window: null
+    parameters: {}
+    reported_metrics:
+      ic_mean: -0.26842105263157895
+      ic_ir: -0.5382373589215883
+      long_short_return: -0.5286934836675473
+      sharpe_ratio: -8.845900168165258
+      max_drawdown: 0.07645784356369803
+    annotation_notes: "股性侧核心指标；取负使低溢价排前"
+
+  - name: "absolute_price"
+    name_cn: "绝对价格"
+    formula: "Neg(close)"
+    formula_latex: "-P"
+    input_fields: ["close"]
+    rebalance_frequency: "monthly"
+    universe: "全转债"
+    lookback_window: null
+    parameters: {}
+    reported_metrics:
+      ic_mean: 0.04210526315789475
+      ic_ir: 0.06329625327902043
+      long_short_return: 0.09501725158529725
+      sharpe_ratio: 1.4207111663782321
+      max_drawdown: 0.060140429980554855
+    annotation_notes: "低价因子；取负方向"
+
+  - name: "option_value"
+    name_cn: "期权价值"
+    formula: "option_value"
+    formula_latex: "C_{option}"
+    input_fields: ["option_value"]
+    rebalance_frequency: "monthly"
+    universe: "全转债"
+    lookback_window: null
+    parameters: {}
+    reported_metrics:
+      ic_mean: -0.04210526315789475
+      ic_ir: -0.06329625327902043
+      long_short_return: -0.09899619895371833
+      sharpe_ratio: -1.4746110855400254
+      max_drawdown: 0.06278109556433716
+    annotation_notes: "转债特质因子；fixture 用 close-bond_value 合成"
+
+  - name: "implied_vol_momentum"
+    name_cn: "隐含波动率动量"
+    formula: "implied_vol / Ref(implied_vol, 5) - 1"
+    formula_latex: "\\frac{IV_t}{IV_{t-5}}-1"
+    input_fields: ["implied_vol"]
+    rebalance_frequency: "monthly"
+    universe: "全转债"
+    lookback_window: 5
+    parameters:
+      lookback: 5
+    reported_metrics:
+      ic_mean: 0.25757575757575757
+      ic_ir: 0.3989258646600191
+      long_short_return: 0.4724764752689651
+      sharpe_ratio: 7.583774871913084
+      max_drawdown: 0.01622017067584946
+    annotation_notes: "动量类隐波变化"
+
+  - name: "remaining_size"
+    name_cn: "剩余规模"
+    formula: "Neg(remaining_size)"
+    formula_latex: "-Size"
+    input_fields: ["remaining_size"]
+    rebalance_frequency: "monthly"
+    universe: "全转债"
+    lookback_window: null
+    parameters: {}
+    reported_metrics:
+      ic_mean: -0.04210526315789475
+      ic_ir: -0.06329625327902043
+      long_short_return: -0.09899619895371833
+      sharpe_ratio: -1.4746110855400254
+      max_drawdown: 0.06278109556433716
+    annotation_notes: "小规模偏好；取负"

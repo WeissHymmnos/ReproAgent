@@ -37,7 +37,7 @@ class SchemaValidator:
         if stack:
             description += "\n[WARN] Formula has unclosed brackets."
 
-        # 2. 数据字典映射
+        # 2. 数据字典映射（股票 + 转债）
         canonical_map = {
             "收盘价": "close",
             "开盘价": "open",
@@ -49,6 +49,23 @@ class SchemaValidator:
             "市盈率": "pe_ttm",
             "市净率": "pb",
             "收益率": "returns",
+            # 转债
+            "到期收益率": "ytm",
+            "YTM": "ytm",
+            "ytm": "ytm",
+            "债性": "ytm",
+            "平价溢价率": "premium_rate",
+            "转股溢价率": "premium_rate",
+            "溢价率": "premium_rate",
+            "债底": "bond_value",
+            "纯债价值": "bond_value",
+            "隐含波动率": "implied_vol",
+            "隐波": "implied_vol",
+            "期权价值": "option_value",
+            "剩余规模": "remaining_size",
+            "转股价": "conversion_price",
+            "绝对价格": "close",
+            "转债价格": "close",
         }
 
         new_mappings: list[DataDictMapping] = []

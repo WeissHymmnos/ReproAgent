@@ -12,19 +12,22 @@ def generate_dashboard(db_path: Optional[Path] = None, output_path: Optional[Pat
     factors = []
     for fr in factor_rows:
         ic_s, ex_s = db.get_factor_ts(fr["id"])
-        factors.append({
-            "id": fr["id"],
-            "name": fr["name"],
-            "ic_series": ic_s,
-            "excess_cum": ex_s,
-            "stats": {
-                "ic": fr["ic_mean"], "icir": fr["icir"],
-                "ann_return": fr["ann_return"],
-                "max_drawdown": fr["max_drawdown"],
-                "win_rate": fr["win_rate"],
-                "std": fr["ic_std"],
+        factors.append(
+            {
+                "id": fr["id"],
+                "name": fr["name"],
+                "ic_series": ic_s,
+                "excess_cum": ex_s,
+                "stats": {
+                    "ic": fr["ic_mean"],
+                    "icir": fr["icir"],
+                    "ann_return": fr["ann_return"],
+                    "max_drawdown": fr["max_drawdown"],
+                    "win_rate": fr["win_rate"],
+                    "std": fr["ic_std"],
+                },
             }
-        })
+        )
 
     HTML = f"""<!DOCTYPE html>
 <html lang="zh-CN">

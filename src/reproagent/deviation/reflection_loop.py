@@ -17,7 +17,7 @@ class ReflectionLoopController:
     """有界反思循环：max_iterations=3，连续 2 次无改善则 escalate。
 
     集成跨报告经验记忆（ExperienceMemory），在反思 prompt 中注入
-    历史成功/失败模式。
+    历史成功/失败模式；修订时按 root_cause 选择策略。
     """
 
     def __init__(
@@ -29,6 +29,7 @@ class ReflectionLoopController:
         tolerances: ToleranceConfig,
         repository: Repository,
         experience_memory: object | None = None,
+        max_iterations: int = 3,
     ) -> None:
         self.reproducer = reproducer
         self.analyzer = analyzer
@@ -37,6 +38,7 @@ class ReflectionLoopController:
         self.tolerances = tolerances
         self.repository = repository
         self.experience_memory = experience_memory
+        self.max_iterations = max_iterations
 
     def run(
         self,
@@ -54,7 +56,7 @@ class ReflectionLoopController:
             factor_id=initial_config.factor_specs[0].id,
             report_id=initial_config.report_id,
             original_config=initial_config,
-            max_iterations=3,
+            max_iterations=self.max_iterations,
             current_iteration=0,
             status="in_progress",
             created_at=datetime.now(UTC),
@@ -117,7 +119,16 @@ class ReflectionLoopController:
                 break
 
             prompt = self._build_reflection_prompt(state, deviation)
-            revised_spec = self.llm_extractor.revise(prompt, current_config.factor_specs[0])
+            cause = (
+                deviation.root_cause.value
+                if hasattr(deviation.root_cause, "value")
+                else str(deviation.root_cause)
+            )
+            revised_spec = self.llm_extractor.revise(
+                prompt,
+                current_config.factor_specs[0],
+                root_cause=cause,
+            )
 
             current_config = current_config.model_copy(deep=True)
             current_config.factor_specs = [revised_spec]
@@ -165,8 +176,20 @@ class ReflectionLoopController:
     ) -> str:
         from reproagent.parser.prompts import REFLECTION_PROMPT
 
+        experience_context = ""
+        if self.experience_memory is not None:
+            try:
+                spec0 = state.original_config.factor_specs[0]
+                fields = [f.name for f in (spec0.input_fields or [])]
+                experience_context = self.experience_memory.build_reflection_context(
+                    spec0.formula, fields
+                )
+            except Exception:  # noqa: BLE001
+                experience_context = ""
+
         return REFLECTION_PROMPT.render(
             original_spec=state.original_config.factor_specs[0],
             history=state.steps,
             latest_deviation=latest_deviation,
+            experience_context=experience_context,
         )

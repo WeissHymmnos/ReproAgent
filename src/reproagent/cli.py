@@ -131,6 +131,80 @@ def reproduce(pdf_path: Path = typer.Argument(..., exists=True, dir_okay=False))
 
 
 @app.command()
+def text(
+    file: Path | None = typer.Option(
+        None, "--file", "-f", exists=True, dir_okay=False, help="Markdown 文件路径"
+    ),
+    title: str = typer.Option(
+        "Markdown Input", "--title", "-t", help="研报标题"
+    ),
+    broker: str = typer.Option(
+        "unknown", "--broker", "-b", help="券商名称"
+    ),
+) -> None:
+    """从 Markdown 文本直接提取因子并复现（跳过 PDF 解析）。
+
+    支持两种输入方式：
+    1. --file/-f 指定 Markdown 文件路径
+    2. 无参数时从 stdin 读取（支持管道输入）
+
+    示例:
+      reproagent text --file research_report.md
+      cat report.md | reproagent text
+      reproagent text --title "动量因子研报" --broker "中信证券" < report.md
+    """
+    import sys
+
+    try:
+        from reproagent.pipeline import reproduce_text
+    except ImportError as exc:
+        typer.echo(f"text unavailable: pipeline import failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    # 读取输入
+    if file is not None:
+        text_content = file.read_text(encoding="utf-8")
+    elif not sys.stdin.isatty():
+        text_content = sys.stdin.read()
+    else:
+        typer.echo(
+            "text: 请通过 --file 指定文件，或通过管道传入 Markdown 内容。",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    if not text_content.strip():
+        typer.echo("text: 输入为空。", err=True)
+        raise typer.Exit(code=1)
+
+    settings = get_settings()
+    if settings.is_prod and not settings.mock_llm_allowed:
+        key = settings.llm_api_key.get_secret_value().strip()
+        if not key:
+            typer.echo(
+                "text failed: APP_ENV=prod requires LLM_API_KEY "
+                "(or set ALLOW_MOCK_LLM=true for offline).",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+    typer.echo(f"text: processing {len(text_content)} chars, title={title!r}")
+
+    try:
+        result = reproduce_text(text_content, settings, title=title, broker=broker)
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"text failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo("text ok")
+    if result is not None:
+        try:
+            typer.echo(json.dumps(result, default=str, ensure_ascii=False))
+        except Exception:  # noqa: BLE001
+            typer.echo(str(result))
+
+
+@app.command()
 def library(
     style: str | None = typer.Option(None, "--style", "-s", help="按风格过滤"),
     html: bool = typer.Option(False, "--html", help="生成 HTML 仪表盘到 wiki_dir"),
@@ -321,8 +395,26 @@ def benchmark(
             raise typer.Exit(code=1)
         typer.echo(f"benchmark: running {run}")
         typer.echo(f"  ground_truth: {gt_path}")
-        typer.echo("  (全链路比对待实现 — 当前仅校验 schema)")
-        # TODO: 全链路流程
+        try:
+            from reproagent.benchmark.runner import run_benchmark
+        except ImportError as exc:
+            typer.echo(f"benchmark unavailable: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+        settings = get_settings()
+        # 默认指向 fixtures 测试数据，便于离线跑通
+        if settings.local_data_path is None:
+            local = Path("tests/fixtures/test_data")
+            if local.exists():
+                settings = settings.model_copy(update={"local_data_path": local})
+
+        result = run_benchmark(run, settings, benchmark_dir=benchmark_dir)
+        typer.echo(json.dumps(result, default=str, ensure_ascii=False, indent=2))
+        summary = result.get("summary") or {}
+        if result.get("status") not in {"passed", "partial"}:
+            raise typer.Exit(code=1)
+        if summary.get("errors", 0) > 0 and summary.get("passed", 0) == 0:
+            raise typer.Exit(code=1)
         return
 
     if run_all:
@@ -330,9 +422,23 @@ def benchmark(
         if not ready:
             typer.echo("benchmark: all reports are pending (not yet annotated)")
             return
+        try:
+            from reproagent.benchmark.runner import run_benchmark_all
+        except ImportError as exc:
+            typer.echo(f"benchmark unavailable: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+        settings = get_settings()
+        if settings.local_data_path is None:
+            local = Path("tests/fixtures/test_data")
+            if local.exists():
+                settings = settings.model_copy(update={"local_data_path": local})
+
         typer.echo(f"benchmark: running {len(ready)} report(s)")
-        for r in ready:
-            typer.echo(f"  {r['report_id']} ... (全链路待实现)")
+        result = run_benchmark_all(settings, benchmark_dir=benchmark_dir)
+        typer.echo(json.dumps(result, default=str, ensure_ascii=False, indent=2))
+        if result.get("status") == "error":
+            raise typer.Exit(code=1)
         return
 
     # 默认行为: 显示摘要

@@ -11,6 +11,31 @@ import polars as pl
 from reproagent.exceptions import ConfigurationError, ReproductionError
 from reproagent.settings import Settings
 
+# 转债 universe 别名（大小写不敏感）
+_CB_UNIVERSE_ALIASES = frozenset(
+    {
+        "cb",
+        "convertible",
+        "convertible_bond",
+        "convertible_bonds",
+        "全转债",
+        "转债",
+        "可转债",
+    }
+)
+
+
+def is_cb_universe(universe: str | list[str]) -> bool:
+    """判断是否为转债股票池（非显式代码列表）。"""
+    if isinstance(universe, list):
+        return False
+    u = (universe or "").strip()
+    if not u:
+        return False
+    if u.lower() in _CB_UNIVERSE_ALIASES:
+        return True
+    return "转债" in u
+
 
 class DataLoader:
     """从 ricequant / tushare / local 加载为 Polars DataFrame。"""
@@ -24,7 +49,10 @@ class DataLoader:
         start: date,
         end: date,
     ) -> pl.DataFrame:
-        """日频量价：trade_date, ts_code, open, high, low, close, volume, amount。"""
+        """日频量价：trade_date, ts_code, open, high, low, close, volume, amount。
+
+        转债 universe（全转债/cb）在 local 模式下优先读取 ``cb_prices.parquet``。
+        """
         if self.settings.data_source == "local":
             return self._load_local_price(universe, start, end)
         elif self.settings.data_source == "ricequant":
@@ -61,7 +89,7 @@ class DataLoader:
                 f"Fundamental data not configured for {self.settings.data_source}"
             )
 
-    def _load_local_price(self, universe: str | list[str], start: date, end: date) -> pl.DataFrame:
+    def _resolve_local_data_path(self) -> Path:
         data_path = self.settings.local_data_path
         if data_path is None:
             data_path = Path("tests/fixtures/test_data")
@@ -69,16 +97,41 @@ class DataLoader:
                 raise ConfigurationError(
                     "local_data_path is not set and tests/fixtures/test_data does not exist."
                 )
+        return Path(data_path)
 
-        parquet_file = data_path / "prices.parquet"
-        csv_file = data_path / "prices.csv"
+    def _load_local_price(self, universe: str | list[str], start: date, end: date) -> pl.DataFrame:
+        data_path = self._resolve_local_data_path()
 
-        if parquet_file.exists():
-            df = pl.read_parquet(parquet_file)
-        elif csv_file.exists():
-            df = pl.read_csv(csv_file)
-        else:
-            raise ConfigurationError(f"No prices.parquet or prices.csv found in {data_path}")
+        # 转债池优先 cb_prices.parquet
+        prefer_cb = is_cb_universe(universe)
+        candidates: list[Path] = []
+        if prefer_cb:
+            candidates.append(data_path / "cb_prices.parquet")
+            candidates.append(data_path / "cb_prices.csv")
+        candidates.extend(
+            [
+                data_path / "prices.parquet",
+                data_path / "prices.csv",
+            ]
+        )
+        if not prefer_cb:
+            # 非转债也允许在无股票文件时回退到转债 fixture（仅测试便利）
+            candidates.append(data_path / "cb_prices.parquet")
+
+        df: pl.DataFrame | None = None
+        for path in candidates:
+            if not path.exists():
+                continue
+            if path.suffix == ".parquet":
+                df = pl.read_parquet(path)
+            else:
+                df = pl.read_csv(path)
+            break
+
+        if df is None:
+            raise ConfigurationError(
+                f"No prices/cb_prices parquet or csv found in {data_path}"
+            )
 
         col_map = {}
         if "datetime" in df.columns and "trade_date" not in df.columns:
@@ -97,9 +150,22 @@ class DataLoader:
 
         df = df.filter((pl.col("trade_date") >= start) & (pl.col("trade_date") <= end))
 
-        if universe != "all":
-            if isinstance(universe, str):
-                universe = [universe]
+        # 命名 universe（all / 指数 / 转债）不按代码过滤；列表则按代码过滤
+        named = {
+            "all",
+            "csi300",
+            "csi500",
+            "csi1000",
+            "全a股",
+            "全A股",
+            *{a.lower() for a in _CB_UNIVERSE_ALIASES},
+        }
+        if isinstance(universe, str):
+            u_key = universe.strip()
+            if u_key and u_key.lower() not in named and "转债" not in u_key and "股" not in u_key:
+                df = df.filter(pl.col("ts_code").is_in([universe]))
+            # else: keep full panel for named universes
+        elif isinstance(universe, list):
             df = df.filter(pl.col("ts_code").is_in(universe))
 
         required_cols = ["trade_date", "ts_code", "open", "high", "low", "close", "volume"]
@@ -357,12 +423,36 @@ class DataLoader:
         # 股息
         "dividend_yield": "dividend_yield",
         "股息率": "dividend_yield",
+        # ── 转债专用 ──
+        "ytm": "ytm",
+        "YTM": "ytm",
+        "到期收益率": "ytm",
+        "债性": "ytm",
+        "premium_rate": "premium_rate",
+        "平价溢价率": "premium_rate",
+        "转股溢价率": "premium_rate",
+        "溢价率": "premium_rate",
+        "bond_value": "bond_value",
+        "债底": "bond_value",
+        "纯债价值": "bond_value",
+        "implied_vol": "implied_vol",
+        "隐波": "implied_vol",
+        "隐含波动率": "implied_vol",
+        "option_value": "option_value",
+        "期权价值": "option_value",
+        "remaining_size": "remaining_size",
+        "剩余规模": "remaining_size",
+        "余额": "remaining_size",
+        "conversion_price": "conversion_price",
+        "转股价": "conversion_price",
         # qlib 风格字段引用映射
         "$roe": "roe_ttm",
         "$pe": "pe_ttm",
         "$pb": "pb",
         "$market_cap": "market_cap",
         "$turnover_rate": "turnover_rate",
+        "$ytm": "ytm",
+        "$premium_rate": "premium_rate",
     }
 
     @classmethod

@@ -39,8 +39,8 @@ REFLECTION_PROMPT = Template(
 {% set dev = step.deviation_report %}
 - 偏差:
   - IC 均值偏差: {{ dev.metric_deviations.get("ic_mean", "N/A") if dev else "N/A" }}
-  - 多空年化收益偏差: {{ dev.metric_deviations.get("long_short_return", "N/A") if dev else "N/A" }}
-  - 夏普偏差: {{ dev.metric_deviations.get("sharpe", "N/A") if dev else "N/A" }}
+  - 多空年化收益偏差: {{ dev.metric_deviations.get("long_short_annual_return", "N/A") if dev else "N/A" }}
+  - 夏普偏差: {{ dev.metric_deviations.get("sharpe_ratio", "N/A") if dev else "N/A" }}
 - 根因分类: {{ dev.root_cause.value if dev else "N/A" }}
 - 详情: {{ dev.root_cause_detail if dev else "" }}
 {% endfor %}
@@ -50,6 +50,48 @@ REFLECTION_PROMPT = Template(
 - 根因: {{ latest_deviation.root_cause.value }}
 - 详情: {{ latest_deviation.root_cause_detail }}
 
-请修订因子定义以减少偏差，聚焦于识别出的根因。输出修订后的完整 ParsedFactorSpec。
+## 根因对应修订建议
+{% if latest_deviation.root_cause.value == "LOOKAHEAD_BIAS" %}
+- 对价格字段加 Ref(x, 1) 滞后；检查 shift 方向
+{% elif latest_deviation.root_cause.value == "FORMULA_ERROR" %}
+- 检查算子与符号方向；尝试 CSZScore/Rank 标准化
+{% elif latest_deviation.root_cause.value == "PARAMETER_ERROR" %}
+- 调整 lookback / 调仓频率 / 分组数
+{% elif latest_deviation.root_cause.value == "UNIVERSE_MISMATCH" %}
+- 切换股票池（csi300/csi500/全A/全转债）
+{% elif latest_deviation.root_cause.value == "DATA_MISMATCH" %}
+- 检查字段映射与复权；使用 Rank 削弱量纲
+{% else %}
+- 综合检查公式、参数与数据口径
+{% endif %}
+
+{% if experience_context %}
+## 跨报告经验记忆
+{{ experience_context }}
+{% endif %}
+
+请修订因子定义以减少偏差，聚焦于识别出的根因。
+公式必须使用白名单算子（Rank/Ref/Mean/Std/CSZScore 等）。
+输出修订后的完整 ParsedFactorSpec。
+"""
+)
+
+ROOT_CAUSE_PROMPT = Template(
+    """你是量化复现诊断助手。根据复现偏差模式判断根因类别。
+
+可选类别（只能选一个）：
+- DATA_MISMATCH: 数据字段/复权/口径整体偏移
+- FORMULA_ERROR: 公式符号或算子错误
+- PARAMETER_ERROR: 窗口/调仓等参数错误
+- UNIVERSE_MISMATCH: 股票池不一致
+- LOOKAHEAD_BIAS: 未来函数或时点错误
+- UNKNOWN: 无法判断
+
+因子公式: {{ formula }}
+股票池: {{ universe }}
+指标偏差 (reproduced - reported): {{ deviations }}
+详情: {{ detail }}
+
+只输出类别枚举值对应的结构化结果。
 """
 )

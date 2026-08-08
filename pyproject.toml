@@ -1,6 +1,6 @@
 [project]
 name = "reproagent"
-version = "0.1.0"
+version = "1.0.0"
 description = "研报因子自动复现系统 — PDF 卖方研报 → 因子提取 → 回测复现 → 偏差自愈 → 因子库"
 readme = "README.md"
 requires-python = ">=3.12"
