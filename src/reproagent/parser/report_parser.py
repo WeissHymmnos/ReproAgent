@@ -29,6 +29,15 @@ class ReportParser:
         specs = self.schema_validator.validate_all(specs)
         return specs
 
+    def parse_text(self, report: ResearchReport, markdown: str) -> list[ParsedFactorSpec]:
+        """直接对 Markdown 文本做 LLM 提取（跳过 PDF 布局解析）。
+
+        用于已有 Markdown 文本的场景（如 CLI --text、API 直接传入 markdown）。
+        """
+        specs = self.llm_extractor.extract(report, markdown)
+        specs = self.schema_validator.validate_all(specs)
+        return specs
+
     def build_config(
         self,
         specs: list[ParsedFactorSpec],

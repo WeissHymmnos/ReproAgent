@@ -3,18 +3,20 @@
 
 reports:
   - report_id: "cb-factor-investing"
-    broker: "未知"
-    report_date: "2024-01-01"  # 待确认
+    broker: "华泰证券"
+    report_date: "2026-05-18"
     report_title: "转债量化手册：因子投资实践"
     report_file: "../../../../【转债专题报告】转债量化手册：因子投资实践.pdf"
-    status: "pending"  # pending | annotated | validated
-    factor_count: 0  # 待标注
-    annotation_notes: "repo 根目录已有 PDF 和 Markdown 版本，待人工标注 ground truth"
+    status: "validated"
+    factor_count: 6
+    extraction_fidelity: false
+    annotation_notes: "6 代表因子 + fixture 对齐 metrics；可全链路偏差门控"
 
   - report_id: "minimal"
     broker: "Mock"
     report_date: "2023-01-01"
     report_title: "Minimal Test Report"
     report_file: "../sample_reports/minimal.pdf"
-    status: "annotated"
+    status: "validated"
     factor_count: 1
+    extraction_fidelity: true

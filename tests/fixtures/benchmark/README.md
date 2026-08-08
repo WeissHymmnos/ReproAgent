@@ -1,65 +1,94 @@
 # 复现基准语料库 (Reproduction Benchmark Corpus)
 
-验证 `reproagent` 从研报中提取因子定义并复现回测指标的准确率。
+验证 `reproagent` 因子公式可执行性，以及（可选）与研报声称指标的偏差。
 
 ## 目录结构
 
 ```
 benchmark/
-├── README.md              ← 本文件
-├── catalog.yaml           ← 语料索引
-└── {report_id}/           ← 每篇研报一个子目录
-    ├── report.pdf         ← 原始 PDF（或符号链接到仓库根目录）
-    ├── ground_truth.yaml  ← 人工标注的因子 ground truth
-    └── expected_metrics.yaml  ← 预期回测指标与容忍区间
+├── README.md
+├── catalog.yaml           ← 语料索引（status / extraction_fidelity）
+└── {report_id}/
+    └── ground_truth.yaml  ← 人工标注的因子 ground truth
 ```
+
+相关本地数据：
+
+- `tests/fixtures/test_data/prices.parquet` — 股票小样本
+- `tests/fixtures/test_data/cb_prices.parquet` — 转债合成 panel（含 ytm / premium_rate 等）
 
 ## ground_truth.yaml schema
 
 ```yaml
 report_id: "unique-id"
-broker: "中信证券"
-report_date: "2024-03-15"
+broker: "华泰证券"
+report_date: "2026-05-18"
 report_title: "研报标题"
+backtest_params:
+  start_date: "2023-01-03"
+  end_date: "2023-02-27"
 factors:
-  - name: "factor_english_name"
-    name_cn: "因子中文名"
-    formula: "close / Ref(close, 20) - 1"
-    formula_latex: "r_{t-20,t}"
-    input_fields: ["close"]
+  - name: "ytm_bondness"
+    name_cn: "债性(YTM)"
+    formula: "ytm"
+    input_fields: ["ytm"]
     rebalance_frequency: "monthly"
-    universe: "全A股剔除ST和上市不足60日"
-    lookback_window: 20
-    parameters:
-      momentum_period: 20
-      holding_period: 20
+    universe: "全转债"
+    lookback_window: null
     reported_metrics:
-      ic_mean: 0.045
-      ic_ir: 0.52
-      long_short_return: 0.12
-      sharpe_ratio: 1.15
-      max_drawdown: 0.08
-    annotation_notes: "原文第7页表3，使用后复权价格"
+      ic_mean: null          # null = 仅校验可计算
+      ic_ir: null
+      long_short_return: null
+      sharpe_ratio: null
+      max_drawdown: null
+    annotation_notes: "..."
 ```
 
-## 语料管理
+### 比对规则
+
+| reported_metrics | 通过条件 |
+|------------------|----------|
+| 全部为 null | 因子值非全 NaN（`values_ok`） |
+| 含具体数值 | `DeviationAnalyzer` 容忍区间门控 |
+
+### catalog 字段
+
+| 字段 | 含义 |
+|------|------|
+| `status` | `pending` / `annotated` / `validated` |
+| `extraction_fidelity` | `true` 时 CI 还校验 mock/LLM 提取因子名与公式 |
+
+## 命令
 
 ```bash
-# 列出所有基准报告
-reproagent benchmark --list
+# 列表
+uv run reproagent benchmark --list
 
-# 对单篇研报运行全流程 + 对比 ground truth
-reproagent benchmark --run REPORT_ID
+# ground_truth 全链路（不依赖 LLM）
+DATA_SOURCE=local LOCAL_DATA_PATH=tests/fixtures/test_data \
+  uv run reproagent benchmark --run minimal
 
-# 批量运行
-reproagent benchmark --run-all
+DATA_SOURCE=local LOCAL_DATA_PATH=tests/fixtures/test_data \
+  uv run reproagent benchmark --run cb-factor-investing
 
-# 生成汇总报告
-reproagent benchmark --report
+uv run reproagent benchmark --run-all
+uv run reproagent benchmark --report
 ```
 
-## 语料来源
+结果写入 `~/.reproagent/benchmark/{report_id}/result.json`。
 
-1. **阶段一**（进行中）：QuantsPlaybook 已验证研报
-2. **阶段二**（计划中）：zer0factor workspace 标注
-3. **阶段三**（计划中）：2024-2026 新发研报
+## 当前语料
+
+| report_id | 状态 | 因子数 | 说明 |
+|-----------|------|--------|------|
+| `minimal` | annotated | 1 | mock 小 PDF + 提取 fidelity |
+| `cb-factor-investing` | annotated | 6 | 华泰转债手册代表因子；引擎比对 |
+
+## 标注 SOP（新增研报）
+
+1. 在 `catalog.yaml` 增加条目（先 `pending`）
+2. 创建 `{report_id}/ground_truth.yaml`，至少填 `name` / `formula` / `input_fields` / `universe`
+3. 若需转债字段，确保 `cb_prices.parquet` 或数据源含对应列
+4. 本地跑 `benchmark --run {id}`，确认 `status=passed`
+5. 将 `status` 改为 `annotated`；有真实声称指标并核对后改为 `validated`
+6. 仅当 mock/LLM 也能稳定提取同名因子时，设 `extraction_fidelity: true`

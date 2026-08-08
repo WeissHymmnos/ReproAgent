@@ -28,7 +28,19 @@ def load_ground_truth(report_id: str) -> dict | None:
 
 
 def _annotated_reports() -> list[dict]:
-    return [r for r in load_catalog() if r.get("status") == "annotated"]
+    """annotated 或 validated 均可跑 ground_truth 驱动比对。"""
+    return [
+        r for r in load_catalog() if r.get("status") in {"annotated", "validated"}
+    ]
+
+
+def _extraction_fidelity_reports() -> list[dict]:
+    """仅对设计为可 mock 提取对齐的报告做提取 fidelity。"""
+    return [
+        r
+        for r in _annotated_reports()
+        if r.get("extraction_fidelity", r.get("report_id") == "minimal")
+    ]
 
 
 def _report_pdf_path(report: dict) -> Path:
@@ -103,8 +115,12 @@ class TestExtractionFidelity:
     def test_parse_extracts_all_expected_factor_names(
         self, offline_settings: object
     ) -> None:
-        """对每篇 annotated 报告，验证 pipeline 提取的因子名包含 ground truth 中全部因子。"""
-        for report in _annotated_reports():
+        """对 extraction_fidelity=true 的报告，验证 mock/LLM 提取覆盖 ground truth 因子名。"""
+        reports = _extraction_fidelity_reports()
+        if not reports:
+            pytest.skip("无 extraction_fidelity 报告")
+
+        for report in reports:
             report_id = report["report_id"]
             gt = load_ground_truth(report_id)
             if gt is None or not gt.get("factors"):
@@ -160,8 +176,11 @@ class TestReproductionFidelity:
     def test_full_pipeline_produces_backtest_result(
         self, offline_settings: object
     ) -> None:
-        """全链路跑通：PDF → 提取 → 复制 → 回测 → 产生合法 BacktestResult。"""
-        for report in _annotated_reports():
+        """全链路跑通：PDF → 提取 → 复制 → 回测 → 产生合法 BacktestResult。
+
+        仅对 extraction_fidelity 小样例 PDF 跑，避免真实长研报拖慢 CI。
+        """
+        for report in _extraction_fidelity_reports():
             report_id = report["report_id"]
             pdf_path = _report_pdf_path(report)
             if not pdf_path.exists():
@@ -183,7 +202,7 @@ class TestReproductionFidelity:
         self, offline_settings: object
     ) -> None:
         """提取的因子公式与 ground truth 完全一致（在 mock 模式下）。"""
-        for report in _annotated_reports():
+        for report in _extraction_fidelity_reports():
             report_id = report["report_id"]
             gt = load_ground_truth(report_id)
             if not gt or not gt.get("factors"):
@@ -212,6 +231,20 @@ class TestReproductionFidelity:
                     f"报告 {report_id}.{gt_factor['name']}: "
                     f"公式不匹配: {spec.formula} != {gt_factor['formula']}"
                 )
+
+    def test_ground_truth_benchmark_runner(self, offline_settings: object) -> None:
+        """ground_truth 驱动的全链路比对（不依赖 LLM 提取）。"""
+        from reproagent.benchmark.runner import run_benchmark
+
+        for report in _annotated_reports():
+            report_id = report["report_id"]
+            gt = load_ground_truth(report_id)
+            if not gt or not gt.get("factors"):
+                continue
+            result = run_benchmark(report_id, offline_settings, benchmark_dir=_BENCHMARK_DIR)
+            assert result["status"] in {"passed", "partial"}
+            assert result["summary"]["errors"] == 0, result
+            assert result["summary"]["passed"] >= 1, result
 
     def test_resolve_and_report_annotated_count(self) -> None:
         """汇总报告：已标注 vs 待标注数。"""

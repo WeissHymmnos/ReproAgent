@@ -19,9 +19,6 @@ def setup_logging(settings: Settings) -> None:
         retention="30 days",
         compression="zip",
         level="DEBUG",
-        format=(
-            "{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | "
-            "{name}:{function}:{line} | {message}"
-        ),
+        format=("{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}"),
     )
     logger.add(sys.stderr, level="INFO")

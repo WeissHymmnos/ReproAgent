@@ -521,7 +521,7 @@ _CS_OPS = {
 # 算子白名单（用于表达式校验）
 _OPERATOR_WHITELIST: set[str] = set(_CONTEXT.keys()) - {"pl", "Const"}
 
-# 字段白名单（Qlib 风格 $field 语法 + 裸字段）
+# 字段白名单（Qlib 风格 $field 语法 + 裸字段 + 转债）
 _FIELD_WHITELIST: set[str] = {
     "close",
     "open",
@@ -539,6 +539,25 @@ _FIELD_WHITELIST: set[str] = {
     "date",
     "asset",
     "ts_code",
+    # 转债 / 基本面扩展字段（与 DataLoader 规范化名对齐）
+    "ytm",
+    "premium_rate",
+    "bond_value",
+    "implied_vol",
+    "option_value",
+    "remaining_size",
+    "conversion_price",
+    "pe_ttm",
+    "pb",
+    "roe_ttm",
+    "turnover_rate",
+    "market_cap",
+    "$ytm",
+    "$premium_rate",
+    "$bond_value",
+    "$implied_vol",
+    "$option_value",
+    "$remaining_size",
 }
 
 

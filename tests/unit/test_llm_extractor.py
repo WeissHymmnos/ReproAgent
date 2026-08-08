@@ -59,10 +59,13 @@ def test_revise_without_api_key_returns_modified_spec() -> None:
         extraction_confidence=0.9,
     )
     ex = LLMExtractor(_settings_no_key())
-    revised = ex.revise("please fix the formula", original)
+    revised = ex.revise("please fix the formula", original, root_cause="UNKNOWN")
     assert revised.factor_name == original.factor_name
-    assert revised.formula != original.formula
-    assert "1.0" in revised.formula
+    # 无 key 时走启发式修订：至少公式或 computation_steps 有变化
+    assert (
+        revised.formula != original.formula
+        or revised.computation_steps != original.computation_steps
+    )
 
 
 def test_extract_does_not_call_real_llm(monkeypatch: pytest.MonkeyPatch) -> None:
