@@ -10,16 +10,21 @@ EXTRACTION_PROMPT = Template(
 对每个因子，提取：
 - factor_name: 英文名/规范化名
 - factor_name_cn: 研报中文原名
-- formula: 数学公式（LaTeX 或结构化伪代码）
-- input_fields: 输入字段列表
+- formula: 可执行伪代码，优先使用白名单算子：
+  Rank, Ref, Mean, Std, EMA, Corr, CSZScore, Delay, Sum, Max, Min, Abs, Log, Sign
+  示例: close / Ref(close, 20) - 1   或   -1 * Rank(Mean(volume, 20) / Mean(volume, 60))
+  避免 LaTeX、中文函数名、未定义变量；仅用量价字段 open/high/low/close/volume/amount
+- input_fields: 输入字段列表（name 用 close/volume 等规范名）
 - computation_steps: 有序计算步骤
-- universe / rebalance_frequency / reported_metrics
+- universe: 优先 csi300 / csi500 / 全A股 / 全转债
+- rebalance_frequency
+- reported_metrics: **仅当正文/表格明确给出数值时填写**；否则全部保持 null。禁止编造 IC/夏普/回撤。
 - extraction_confidence / source_pages
 
 研报 Markdown:
 {{ markdown }}
 
-缺失值用 null，不要编造。
+缺失值用 null，不要编造。若无清晰因子公式，构造最接近的量价代理公式，confidence 可偏低但 formula 不可为空。
 """
 )
 

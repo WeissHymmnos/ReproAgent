@@ -39,10 +39,11 @@ def test_extract_without_api_key_returns_mock_spec() -> None:
 
 
 def test_extract_mock_spec_has_reported_metrics() -> None:
+    """Mock 因子应带 reported_metrics 对象；指标可为空（无对照时偏差门控直接通过）。"""
     ex = LLMExtractor(_settings_no_key())
     specs = ex.extract(_report(), "")
     assert specs[0].reported_metrics is not None
-    assert specs[0].reported_metrics.ic_mean is not None
+    assert specs[0].reported_metrics.ic_mean is None
 
 
 def test_revise_without_api_key_returns_modified_spec() -> None:

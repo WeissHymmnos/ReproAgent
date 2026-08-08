@@ -73,15 +73,44 @@ class SchemaValidator:
             tag: Literal["OK", "WARN"] = "OK" if mapping.confidence >= 0.8 else "WARN"
             new_mappings.append(mapping.model_copy(update={"tag": tag}))
 
+        # 规范字段名（量价/常见财务）直接视为 OK，避免无中文 report_name 时全 WARN
+        _canonical_names = {
+            "close",
+            "open",
+            "high",
+            "low",
+            "volume",
+            "amount",
+            "turnover_rate",
+            "pe_ttm",
+            "pb",
+            "returns",
+            "ytm",
+            "premium_rate",
+            "bond_value",
+            "implied_vol",
+            "option_value",
+            "remaining_size",
+            "conversion_price",
+        }
+
         # 如果 LLM 没有提供 mappings，我们尝试基于 input_fields 自动映射
         if not new_mappings and spec.input_fields:
             for field in spec.input_fields:
-                canonical = canonical_map.get(field.report_name, field.name)
-                confidence = 1.0 if field.report_name in canonical_map else 0.5
+                name_l = (field.name or "").strip().lower()
+                if field.report_name in canonical_map:
+                    canonical = canonical_map[field.report_name]
+                    confidence = 1.0
+                elif name_l in _canonical_names:
+                    canonical = name_l
+                    confidence = 1.0
+                else:
+                    canonical = field.name
+                    confidence = 0.5
                 tag = "OK" if confidence >= 0.8 else "WARN"
                 new_mappings.append(
                     DataDictMapping(
-                        report_term=field.report_name,
+                        report_term=field.report_name or field.name,
                         canonical_term=canonical,
                         confidence=confidence,
                         tag=tag,
