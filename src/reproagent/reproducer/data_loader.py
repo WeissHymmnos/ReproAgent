@@ -162,23 +162,21 @@ class DataLoader:
                     if codes:
                         return codes
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Convertible instruments fetch failed: %s", exc)
-            # 回退到 CSI300 价格面板，避免硬失败
-            key = "csi300"
+                raise ReproductionError(
+                    f"Convertible universe resolve failed for {raw!r}: {exc}"
+                ) from exc
+            raise ReproductionError(f"Empty convertible instrument list for universe {raw!r}")
 
-        # 命名指数 / 全 A 代理
+        # 命名指数 / 全 A（显式映射表；不是失败后静默代理）
         index_id = _NAMED_UNIVERSE_INDEX.get(key)
         if index_id is None:
-            # 模糊：含 300/500/1000 / 全A / 股
-            if "1000" in key or "中证1000" in raw:
+            if "1000" in key:
                 index_id = "000852.XSHG"
-            elif "500" in key or "中证500" in raw:
+            elif "500" in key:
                 index_id = "000905.XSHG"
             elif "300" in key or "沪深300" in raw:
                 index_id = "000300.XSHG"
-            elif "全a" in key or "全A" in raw or "a股" in key or key in {"all", "全市场"}:
-                index_id = "000300.XSHG"
-            elif "股" in raw and "转债" not in raw:
+            elif key in {"all", "全市场"} or "全a" in key or "a股" in key:
                 index_id = "000300.XSHG"
 
         if index_id is not None:
@@ -193,46 +191,24 @@ class DataLoader:
                     if comps:
                         return list(comps)
                 except Exception as exc2:  # noqa: BLE001
-                    logger.warning("index_components fallback failed: %s", exc2)
+                    raise ReproductionError(
+                        f"Cannot resolve ricequant universe {raw!r}: {exc2}"
+                    ) from exc2
+            raise ReproductionError(f"Empty index components for universe {raw!r} ({index_id})")
 
-            # 最后兜底：活跃股票前 100
-            try:
-                inst = rqdatac.all_instruments(type="CS")
-                if inst is not None and len(inst) > 0:
-                    col = "order_book_id" if "order_book_id" in inst.columns else inst.columns[0]
-                    return [str(x) for x in inst[col].tolist()[:100]]
-            except Exception as exc:  # noqa: BLE001
-                raise ReproductionError(
-                    f"Cannot resolve ricequant universe {raw!r}: {exc}"
-                ) from exc
-
-        # 视为单个代码；非法/行业/期货/基金等描述性 universe → CSI300 代理
+        # 单个合法代码
         code = _normalize_rq_order_book_id(raw)
         if re.fullmatch(r"\d{6}\.(XSHE|XSHG|XBSE)", code):
             return [code]
 
-        logger.warning(
-            "Unrecognized ricequant universe %r → falling back to CSI300 components",
-            raw,
+        # 未知描述性股票池：硬失败（不再静默 CSI300）
+        from reproagent.reproducer.run_flags import mark_universe_fallback
+
+        mark_universe_fallback(f"unrecognized_universe:{raw}")
+        raise ReproductionError(
+            f"Unrecognized ricequant universe {raw!r}; "
+            "normalize at extract to csi300/csi500/csi1000/全转债"
         )
-        try:
-            comps = rqdatac.index_components("000300.XSHG", date=as_of) or rqdatac.index_components(
-                "000300.XSHG"
-            )
-            if comps:
-                return list(comps)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("CSI300 fallback failed: %s", exc)
-        try:
-            inst = rqdatac.all_instruments(type="CS")
-            if inst is not None and len(inst) > 0:
-                col = "order_book_id" if "order_book_id" in inst.columns else inst.columns[0]
-                return [str(x) for x in inst[col].tolist()[:100]]
-        except Exception as exc:  # noqa: BLE001
-            raise ReproductionError(
-                f"Cannot resolve ricequant universe {raw!r}: {exc}"
-            ) from exc
-        raise ReproductionError(f"Cannot resolve ricequant universe {raw!r}")
 
     def load_price_data(
         self,
@@ -391,9 +367,9 @@ class DataLoader:
                 logger.warning("Resolved empty instruments for universe=%r", universe)
                 return self._empty_price_frame()
 
-            # 缓存键：排序后的代码集 + 日期区间
+            # 缓存键 v2：含市值字段版本
             cache_key = (
-                ",".join(sorted(instruments)[:50]) + f"|n={len(instruments)}",
+                "v2|" + ",".join(sorted(instruments)[:50]) + f"|n={len(instruments)}",
                 start.isoformat(),
                 end.isoformat(),
             )
@@ -420,46 +396,13 @@ class DataLoader:
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("ricequant disk cache read failed: %s", exc)
 
-            try:
-                df = rqdatac.get_price(
-                    instruments,
-                    start_date=start,
-                    end_date=end,
-                    frequency="1d",
-                    fields=["open", "high", "low", "close", "volume", "total_turnover"],
-                )
-            except Exception as fetch_exc:  # noqa: BLE001
-                # 无效代码列表时回退 CSI300，避免整篇研报 error
-                logger.warning(
-                    "get_price failed for %d instruments (%s); retry CSI300",
-                    len(instruments),
-                    fetch_exc,
-                )
-                instruments = self._resolve_ricequant_instruments("csi300", as_of=end)
-                cache_key = (
-                    ",".join(sorted(instruments)[:50]) + f"|n={len(instruments)}",
-                    start.isoformat(),
-                    end.isoformat(),
-                )
-                if cache_key in _RQ_PRICE_CACHE:
-                    return _RQ_PRICE_CACHE[cache_key]
-                disk_path = _RQ_DISK_CACHE_DIR / (
-                    hashlib.sha256(
-                        f"{cache_key[0]}|{cache_key[1]}|{cache_key[2]}".encode()
-                    ).hexdigest()[:24]
-                    + ".parquet"
-                )
-                if disk_path.exists():
-                    pldf = pl.read_parquet(disk_path)
-                    _RQ_PRICE_CACHE[cache_key] = pldf
-                    return pldf
-                df = rqdatac.get_price(
-                    instruments,
-                    start_date=start,
-                    end_date=end,
-                    frequency="1d",
-                    fields=["open", "high", "low", "close", "volume", "total_turnover"],
-                )
+            df = rqdatac.get_price(
+                instruments,
+                start_date=start,
+                end_date=end,
+                frequency="1d",
+                fields=["open", "high", "low", "close", "volume", "total_turnover"],
+            )
 
             if df is None or getattr(df, "empty", True):
                 empty = self._empty_price_frame()
@@ -485,6 +428,9 @@ class DataLoader:
             if "amount" not in pldf.columns:
                 pldf = pldf.with_columns(pl.lit(None).cast(pl.Float64).alias("amount"))
 
+            # 一等公民：拼接市值（供 size/value 类公式直接使用，非运行期 fallback）
+            pldf = self._join_ricequant_market_cap(rqdatac, pldf, instruments, start, end)
+
             _RQ_PRICE_CACHE[cache_key] = pldf
             try:
                 _RQ_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -503,6 +449,53 @@ class DataLoader:
             raise
         except Exception as e:
             raise ReproductionError(f"Failed to fetch data from ricequant: {e}") from e
+
+    def _join_ricequant_market_cap(
+        self,
+        rqdatac: Any,
+        pldf: pl.DataFrame,
+        instruments: list[str],
+        start: date,
+        end: date,
+    ) -> pl.DataFrame:
+        if "market_cap" in pldf.columns:
+            return pldf
+        try:
+            mcap = rqdatac.get_factor(
+                instruments,
+                factor="market_cap",
+                start_date=start,
+                end_date=end,
+            )
+            if mcap is None or getattr(mcap, "empty", True):
+                return pldf
+            mcap = mcap.reset_index()
+            col_map = {}
+            if "date" in mcap.columns:
+                col_map["date"] = "trade_date"
+            if "order_book_id" in mcap.columns:
+                col_map["order_book_id"] = "ts_code"
+            if col_map:
+                mcap = mcap.rename(columns=col_map)
+            mpdf = pl.from_pandas(mcap)
+            if "trade_date" in mpdf.columns and mpdf.schema["trade_date"] == pl.Datetime:
+                mpdf = mpdf.with_columns(pl.col("trade_date").dt.date())
+            if "market_cap" not in mpdf.columns:
+                # single factor series name may vary
+                for c in mpdf.columns:
+                    if c not in {"trade_date", "ts_code"}:
+                        mpdf = mpdf.rename({c: "market_cap"})
+                        break
+            if "market_cap" not in mpdf.columns:
+                return pldf
+            keep = mpdf.select(["trade_date", "ts_code", "market_cap"])
+            out = pldf.join(keep, on=["trade_date", "ts_code"], how="left")
+            # 别名列：与提取规范化 / 公式字段一致
+            out = out.with_columns(pl.col("market_cap").alias("total_market_cap"))
+            return out
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ricequant market_cap join skipped: %s", exc)
+            return pldf
 
     def _load_qlib_price(self, universe: str | list[str], start: date, end: date) -> pl.DataFrame:
         import importlib.util

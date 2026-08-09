@@ -152,10 +152,12 @@ def Exp(x: Any) -> Any:
     return _ensure_expr(x).exp()
 
 
-def Pow(x: Any, n: Any) -> Any:
+def Pow(x: Any, n: Any = 2) -> Any:
+    """幂运算；缺省 n=2（LLM 常写 Pow(x) 表示平方）。"""
+    exp = 2 if n is None else _get_int(n, "Pow")
     if isinstance(x, (int, float)):
-        return pl.lit(float(x) ** _get_int(n, "Pow"))
-    return x.pow(_get_int(n, "Pow"))
+        return pl.lit(float(x) ** exp)
+    return x.pow(exp)
 
 
 def Neg(x: Any) -> Any:
@@ -706,6 +708,9 @@ class PolarsEngine:
             tree = ast.parse(formula, mode="eval")
         except SyntaxError as e:
             if self.allow_formula_fallback:
+                from reproagent.reproducer.run_flags import mark_formula_fallback
+
+                mark_formula_fallback(f"syntax:{e}")
                 logging.getLogger(__name__).warning(
                     "Unparseable formula %r, falling back to close: %s", formula, e
                 )
@@ -725,7 +730,9 @@ class PolarsEngine:
             raise
         except Exception as e:
             if self.allow_formula_fallback:
-                # 回退到 close（非 null）：null 因子会 drop 成空面板并产生全零假指标
+                from reproagent.reproducer.run_flags import mark_formula_fallback
+
+                mark_formula_fallback(str(e))
                 logging.getLogger(__name__).warning(
                     "AST evaluation failed for %s: %s; falling back to close",
                     formula,
@@ -758,19 +765,27 @@ class PolarsEngine:
         if isinstance(node, ast.Name):
             if node.id in _CONTEXT:
                 return _CONTEXT[node.id]
-            # 常见基本面字段在纯量价面板中的可计算代理（避免 null 面板）
+            # 一等公民字段别名 → 面板列（市值由 DataLoader 注入 market_cap）
             _field_alias = {
-                "total_market_cap": "amount",
-                "market_cap": "amount",
-                "mkt_cap": "amount",
-                "circ_mv": "amount",
-                "float_mv": "amount",
+                "total_market_cap": "market_cap",
+                "mkt_cap": "market_cap",
+                "circ_mv": "market_cap",
+                "float_mv": "market_cap",
                 "turnover": "volume",
                 "turnover_rate": "volume",
                 "returns": "close",
                 "ret": "close",
+                "adj_close": "close",
+                "vwap": "close",
             }
             col = _field_alias.get(node.id, node.id)
+            # 若市值列缺失则用 amount（仍属字段映射，非 formula→close 回退）
+            df0 = df_container[0]
+            if col == "market_cap" and "market_cap" not in df0.columns:
+                if "amount" in df0.columns:
+                    col = "amount"
+                elif "close" in df0.columns:
+                    col = "close"
             return pl.col(col)
 
         if isinstance(node, ast.BinOp):

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Batch driver: run real `reproagent text|reproduce` CLI on categorized articles.
+"""Batch driver: real CLI only; score full_no_fallback_success (>98% goal).
 
-Writes JSONL + summary under a scratch/output directory. Scoring matches the goal:
-success iff exit_code==0 and status in {passed, partial}.
+full_no_fallback_success requires:
+  exit 0, status==passed, no soft_pass, no formula_fallback, no universe_fallback,
+  every factor status in {passed, converged} without soft_pass, healthy metrics.
 """
 
 from __future__ import annotations
@@ -21,7 +22,6 @@ from pathlib import Path
 CORPUS_DEFAULT = Path(
     "/home/wh/Documents/KnowledgeBase/Quant/WH/Articles/categorized"
 )
-SUCCESS_STATUSES = frozenset({"passed", "partial"})
 
 
 def select_articles(corpus: Path, n: int, prefer_factor: bool = True) -> list[Path]:
@@ -44,14 +44,12 @@ def select_articles(corpus: Path, n: int, prefer_factor: bool = True) -> list[Pa
             suf = p.suffix.lower()
             if suf not in {".md", ".pdf"}:
                 continue
-            # skip reading plans / tmp junk
             name = p.name.lower()
             if "reading_plan" in name or p.parts[-2] in {"tmp", "scripts"}:
                 continue
             key = p.resolve().as_posix()
             if key in seen:
                 continue
-            # size filter: skip tiny stubs and huge books
             try:
                 sz = p.stat().st_size
             except OSError:
@@ -68,7 +66,6 @@ def select_articles(corpus: Path, n: int, prefer_factor: bool = True) -> list[Pa
         if len(md_first) >= n:
             break
 
-    # Prefer MD (skip heavy PDF layout); fill with PDF if needed
     picked = md_first[:n]
     if len(picked) < n:
         picked.extend(pdf_second[: n - len(picked)])
@@ -76,8 +73,6 @@ def select_articles(corpus: Path, n: int, prefer_factor: bool = True) -> list[Pa
 
 
 def _extract_json_blob(stdout: str) -> dict | None:
-    """Last JSON object in CLI stdout (after 'text ok' / 'reproduce ok')."""
-    # Prefer last line that is a full JSON object
     lines = [ln.strip() for ln in stdout.splitlines() if ln.strip()]
     for ln in reversed(lines):
         if ln.startswith("{") and ln.endswith("}"):
@@ -85,7 +80,6 @@ def _extract_json_blob(stdout: str) -> dict | None:
                 return json.loads(ln)
             except json.JSONDecodeError:
                 continue
-    # Fallback: greedy last {...}
     matches = list(re.finditer(r"\{[\s\S]*\}", stdout))
     for m in reversed(matches):
         try:
@@ -95,8 +89,103 @@ def _extract_json_blob(stdout: str) -> dict | None:
     return None
 
 
+def _score_full_no_fallback(exit_code: int, blob: dict | None, log: str) -> dict:
+    """Score one run under the strict no-fallback definition."""
+    status = (blob or {}).get("status", "hard_fail")
+    factors = (blob or {}).get("factors") or []
+    obs = (blob or {}).get("observability") or {}
+
+    soft_from_obs = bool(obs.get("soft_pass"))
+    formula_fb = bool(obs.get("formula_fallback"))
+    universe_fb = bool(obs.get("universe_fallback"))
+
+    # log-level detectors (defense in depth)
+    if re.search(r"falling back to close|Unparseable formula.*falling back", log, re.I):
+        formula_fb = True
+    if re.search(
+        r"Unrecognized ricequant universe|retry CSI300|falling back to CSI300",
+        log,
+        re.I,
+    ):
+        universe_fb = True
+
+    soft_factors = 0
+    hard_ok = 0
+    bad_factor = 0
+    zero_metric = 0
+    for f in factors:
+        st = f.get("status")
+        soft = bool(f.get("soft_pass")) or str(f.get("reflection_status") or "").startswith(
+            "soft_pass"
+        )
+        if soft:
+            soft_factors += 1
+            soft_from_obs = True
+        if st in {"passed", "converged"} and not soft:
+            hard_ok += 1
+            m = f.get("metrics") or {}
+            vals = [
+                abs(float(m.get(k) or 0))
+                for k in ("ic_mean", "sharpe_ratio", "max_drawdown", "long_short_annual_return")
+            ]
+            if m and max(vals) < 1e-12:
+                zero_metric += 1
+        elif st not in {"passed", "converged"}:
+            bad_factor += 1
+
+    full = (
+        exit_code == 0
+        and status == "passed"
+        and not soft_from_obs
+        and soft_factors == 0
+        and not formula_fb
+        and not universe_fb
+        and bad_factor == 0
+        and zero_metric == 0
+        and hard_ok >= 1
+        and len(factors) >= 1
+    )
+
+    mode = "full_no_fallback_success"
+    if full:
+        mode = "full_no_fallback_success"
+    elif exit_code != 0 or status == "hard_fail":
+        mode = "hard_fail"
+    elif formula_fb:
+        mode = "formula_fallback"
+    elif universe_fb:
+        mode = "universe_fallback"
+    elif soft_from_obs or soft_factors:
+        mode = "soft_pass"
+    elif status == "partial" or bad_factor:
+        mode = "partial_or_factor_fail"
+    elif status == "review_enqueued":
+        mode = "review_enqueued"
+    elif status == "error":
+        mode = "error"
+    elif status == "no_factors":
+        mode = "no_factors"
+    else:
+        mode = f"other:{status}"
+
+    return {
+        "full_no_fallback_success": full,
+        "failure_mode": mode if not full else None,
+        "soft_pass": soft_from_obs or soft_factors > 0,
+        "formula_fallback": formula_fb,
+        "universe_fallback": universe_fb,
+        "hard_ok_factors": hard_ok,
+        "soft_factors": soft_factors,
+        "bad_factors": bad_factor,
+        "zero_metric_passed": zero_metric,
+        "status": status,
+        "factor_count": len(factors),
+        "factor_statuses": [f.get("status") for f in factors],
+        "observability": obs,
+    }
+
+
 def run_one(path: Path, timeout: int, env: dict[str, str]) -> dict:
-    """Invoke shipped CLI for one article."""
     t0 = time.time()
     if path.suffix.lower() == ".md":
         cmd = [
@@ -132,51 +221,30 @@ def run_one(path: Path, timeout: int, env: dict[str, str]) -> dict:
         stderr = f"timeout after {timeout}s"
     except Exception as exc:  # noqa: BLE001
         exit_code = -1
-        stdout = ""
-        stderr = str(exc)
+        stdout, stderr = "", str(exc)
 
     blob = _extract_json_blob(stdout)
-    status = "hard_fail"
-    if blob and isinstance(blob, dict) and "status" in blob:
-        status = str(blob["status"])
-    elif exit_code != 0:
-        status = "hard_fail"
-
-    success = exit_code == 0 and status in SUCCESS_STATUSES
-    err_snip = (stderr or stdout or "")[-400:].replace("\n", " ")
+    log = stdout + "\n" + stderr
+    scored = _score_full_no_fallback(exit_code, blob, log)
     return {
         "path": str(path),
+        "name": path.name,
         "exit_code": exit_code,
-        "status": status,
-        "success": success,
         "seconds": round(time.time() - t0, 2),
-        "error_snippet": err_snip if not success else "",
-        "factor_count": (blob or {}).get("factor_count"),
-        "summary": (blob or {}).get("summary"),
+        "error_snippet": (stderr or stdout)[-400:].replace("\n", " ")
+        if not scored["full_no_fallback_success"]
+        else "",
+        **scored,
     }
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Batch reproagent on categorized articles")
-    ap.add_argument("--n", type=int, default=50, help="Number of articles")
-    ap.add_argument(
-        "--corpus",
-        type=Path,
-        default=CORPUS_DEFAULT,
-        help="Root of categorized articles",
-    )
-    ap.add_argument(
-        "--out-dir",
-        type=Path,
-        required=True,
-        help="Directory for batch_results.jsonl + batch_summary.json",
-    )
-    ap.add_argument("--timeout", type=int, default=240, help="Per-article timeout seconds")
-    ap.add_argument(
-        "--data-source",
-        default=os.environ.get("DATA_SOURCE", "ricequant"),
-        help="DATA_SOURCE env for child processes",
-    )
+    ap = argparse.ArgumentParser(description="Batch reproagent full_no_fallback scoring")
+    ap.add_argument("--n", type=int, default=50)
+    ap.add_argument("--corpus", type=Path, default=CORPUS_DEFAULT)
+    ap.add_argument("--out-dir", type=Path, required=True)
+    ap.add_argument("--timeout", type=int, default=300)
+    ap.add_argument("--data-source", default=os.environ.get("DATA_SOURCE", "ricequant"))
     ap.add_argument(
         "--local-data",
         default=os.environ.get("LOCAL_DATA_PATH", "/home/wh/Documents/Data"),
@@ -189,11 +257,6 @@ def main() -> int:
     summary_path = out_dir / "batch_summary.json"
 
     articles = select_articles(args.corpus, args.n)
-    if len(articles) < args.n:
-        print(
-            f"warn: only found {len(articles)} articles (requested {args.n})",
-            file=sys.stderr,
-        )
     if not articles:
         print("error: no articles selected", file=sys.stderr)
         return 2
@@ -201,13 +264,19 @@ def main() -> int:
     env = os.environ.copy()
     env["DATA_SOURCE"] = args.data_source
     env["LOCAL_DATA_PATH"] = args.local_data
-    # Ensure ricequant extras usable; leave RQ_* from parent env
+    # 严格评分：关闭公式→close 静默回退（同时禁用 soft_pass）
+    env["ALLOW_FORMULA_FALLBACK"] = "false"
+    env["APP_ENV"] = env.get("APP_ENV") or "prod"
+    # prod 需要 mock 关；有 LLM key 时用真实提取
+    env.setdefault("ALLOW_MOCK_LLM", "false")
 
     results: list[dict] = []
-    # Truncate jsonl for this run
     jsonl_path.write_text("", encoding="utf-8")
-
-    print(f"Running {len(articles)} articles; data_source={args.data_source}", flush=True)
+    print(
+        f"Running {len(articles)} articles; data_source={args.data_source}; "
+        f"ALLOW_FORMULA_FALLBACK=false",
+        flush=True,
+    )
     for i, path in enumerate(articles, 1):
         print(f"[{i}/{len(articles)}] {path.name[:60]}…", flush=True)
         row = run_one(path, timeout=args.timeout, env=env)
@@ -215,31 +284,36 @@ def main() -> int:
         with jsonl_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         print(
-            f"  -> exit={row['exit_code']} status={row['status']} "
-            f"success={row['success']} {row['seconds']}s",
+            f"  -> full={row['full_no_fallback_success']} status={row['status']} "
+            f"mode={row.get('failure_mode')} soft={row['soft_pass']} "
+            f"form_fb={row['formula_fallback']} univ_fb={row['universe_fallback']} "
+            f"{row['seconds']}s",
             flush=True,
         )
 
     n = len(results)
-    n_success = sum(1 for r in results if r["success"])
-    rate = (n_success / n) if n else 0.0
-    by_status = Counter(r["status"] for r in results)
+    n_full = sum(1 for r in results if r["full_no_fallback_success"])
+    rate = (n_full / n) if n else 0.0
+    modes = Counter(r.get("failure_mode") or "full_no_fallback_success" for r in results)
     summary = {
         "n": n,
-        "n_success": n_success,
-        "success_rate": rate,
-        "failure_counts_by_status": dict(by_status),
+        "n_full_no_fallback_success": n_full,
+        "full_no_fallback_success_rate": rate,
+        "mode_counts": dict(modes),
         "data_source": args.data_source,
         "local_data_path": args.local_data,
         "corpus": str(args.corpus),
-        "success_definition": "exit_code==0 and status in {passed, partial}",
+        "allow_formula_fallback": False,
+        "success_definition": (
+            "exit0 & status=passed & no soft_pass & no formula_fallback & "
+            "no universe_fallback & all factors hard passed/converged & non-degenerate metrics"
+        ),
     }
     summary_path.write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
-    return 0 if n >= 50 and rate > 0.95 else 1
+    return 0 if n >= 50 and rate > 0.98 else 1
 
 
 if __name__ == "__main__":
