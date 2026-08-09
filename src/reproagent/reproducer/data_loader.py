@@ -50,6 +50,7 @@ _RQ_PRICE_CACHE: dict[tuple[str, str, str], pl.DataFrame] = {}
 _RQ_INITED = False
 # 磁盘缓存目录（跨 CLI 子进程复用）
 _RQ_DISK_CACHE_DIR = Path.home() / ".reproagent" / "cache" / "ricequant_prices"
+_RQ_INST_CACHE_DIR = Path.home() / ".reproagent" / "cache" / "ricequant_instruments"
 
 
 def is_cb_universe(universe: str | list[str]) -> bool:
@@ -180,16 +181,53 @@ class DataLoader:
                 index_id = "000300.XSHG"
 
         if index_id is not None:
+            # 磁盘缓存成分，避免 50 次 CLI 子进程打爆 rq 配额
+            import json as _json
+
+            _RQ_INST_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            # 按月粒度缓存（as_of 年月）
+            stamp = f"{as_of.year:04d}{as_of.month:02d}"
+            inst_path = _RQ_INST_CACHE_DIR / f"{index_id.replace('.', '_')}_{stamp}.json"
+            if inst_path.exists():
+                try:
+                    cached = _json.loads(inst_path.read_text(encoding="utf-8"))
+                    if isinstance(cached, list) and cached:
+                        return [str(x) for x in cached]
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("instrument cache read failed: %s", exc)
             try:
                 comps = rqdatac.index_components(index_id, date=as_of)
                 if comps:
-                    return list(comps)
+                    codes = list(comps)
+                    try:
+                        inst_path.write_text(
+                            _json.dumps(codes, ensure_ascii=False), encoding="utf-8"
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("instrument cache write failed: %s", exc)
+                    return codes
             except Exception as exc:  # noqa: BLE001
                 logger.warning("index_components(%s) failed: %s; trying latest", index_id, exc)
+                # 任意历史缓存兜底
+                for p in sorted(_RQ_INST_CACHE_DIR.glob(f"{index_id.replace('.', '_')}*.json")):
+                    try:
+                        cached = _json.loads(p.read_text(encoding="utf-8"))
+                        if isinstance(cached, list) and cached:
+                            logger.info("Using stale instrument cache %s", p.name)
+                            return [str(x) for x in cached]
+                    except Exception:  # noqa: BLE001
+                        continue
                 try:
                     comps = rqdatac.index_components(index_id)
                     if comps:
-                        return list(comps)
+                        codes = list(comps)
+                        try:
+                            inst_path.write_text(
+                                _json.dumps(codes, ensure_ascii=False), encoding="utf-8"
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+                        return codes
                 except Exception as exc2:  # noqa: BLE001
                     raise ReproductionError(
                         f"Cannot resolve ricequant universe {raw!r}: {exc2}"
@@ -367,9 +405,9 @@ class DataLoader:
                 logger.warning("Resolved empty instruments for universe=%r", universe)
                 return self._empty_price_frame()
 
-            # 缓存键 v2：含市值字段版本
+            # 缓存键 v3：含基本面 join 版本
             cache_key = (
-                "v2|" + ",".join(sorted(instruments)[:50]) + f"|n={len(instruments)}",
+                "v3|" + ",".join(sorted(instruments)[:50]) + f"|n={len(instruments)}",
                 start.isoformat(),
                 end.isoformat(),
             )
@@ -428,8 +466,8 @@ class DataLoader:
             if "amount" not in pldf.columns:
                 pldf = pldf.with_columns(pl.lit(None).cast(pl.Float64).alias("amount"))
 
-            # 一等公民：拼接市值（供 size/value 类公式直接使用，非运行期 fallback）
-            pldf = self._join_ricequant_market_cap(rqdatac, pldf, instruments, start, end)
+            # 一等公民：拼接市值/估值/ROE 等真实基本面列
+            pldf = self._join_ricequant_fundamentals(rqdatac, pldf, instruments, start, end)
 
             _RQ_PRICE_CACHE[cache_key] = pldf
             try:
@@ -450,7 +488,18 @@ class DataLoader:
         except Exception as e:
             raise ReproductionError(f"Failed to fetch data from ricequant: {e}") from e
 
-    def _join_ricequant_market_cap(
+    # 米筐基本面因子 → 面板列名（真实字段，供公式直接使用）
+    _RQ_FUND_FACTORS: tuple[tuple[str, str], ...] = (
+        ("market_cap", "market_cap"),
+        ("pe_ratio", "pe_ratio"),
+        ("pb_ratio", "pb_ratio"),
+        ("ps_ratio", "ps_ratio"),
+        ("return_on_equity", "return_on_equity"),
+        ("return_on_asset", "return_on_asset"),
+        ("dividend_yield", "dividend_yield"),
+    )
+
+    def _join_ricequant_fundamentals(
         self,
         rqdatac: Any,
         pldf: pl.DataFrame,
@@ -458,44 +507,47 @@ class DataLoader:
         start: date,
         end: date,
     ) -> pl.DataFrame:
-        if "market_cap" in pldf.columns:
-            return pldf
-        try:
-            mcap = rqdatac.get_factor(
-                instruments,
-                factor="market_cap",
-                start_date=start,
-                end_date=end,
-            )
-            if mcap is None or getattr(mcap, "empty", True):
-                return pldf
-            mcap = mcap.reset_index()
-            col_map = {}
-            if "date" in mcap.columns:
-                col_map["date"] = "trade_date"
-            if "order_book_id" in mcap.columns:
-                col_map["order_book_id"] = "ts_code"
-            if col_map:
-                mcap = mcap.rename(columns=col_map)
-            mpdf = pl.from_pandas(mcap)
-            if "trade_date" in mpdf.columns and mpdf.schema["trade_date"] == pl.Datetime:
-                mpdf = mpdf.with_columns(pl.col("trade_date").dt.date())
-            if "market_cap" not in mpdf.columns:
-                # single factor series name may vary
-                for c in mpdf.columns:
-                    if c not in {"trade_date", "ts_code"}:
-                        mpdf = mpdf.rename({c: "market_cap"})
-                        break
-            if "market_cap" not in mpdf.columns:
-                return pldf
-            keep = mpdf.select(["trade_date", "ts_code", "market_cap"])
-            out = pldf.join(keep, on=["trade_date", "ts_code"], how="left")
-            # 别名列：与提取规范化 / 公式字段一致
+        """拼接市值/估值/盈利等真实字段（非 close 代理）。"""
+        out = pldf
+        for rq_name, col_name in self._RQ_FUND_FACTORS:
+            if col_name in out.columns:
+                continue
+            try:
+                fdf = rqdatac.get_factor(
+                    instruments,
+                    factor=rq_name,
+                    start_date=start,
+                    end_date=end,
+                )
+                if fdf is None or getattr(fdf, "empty", True):
+                    continue
+                fdf = fdf.reset_index()
+                col_map = {}
+                if "date" in fdf.columns:
+                    col_map["date"] = "trade_date"
+                if "order_book_id" in fdf.columns:
+                    col_map["order_book_id"] = "ts_code"
+                if col_map:
+                    fdf = fdf.rename(columns=col_map)
+                mpdf = pl.from_pandas(fdf)
+                if "trade_date" in mpdf.columns and mpdf.schema["trade_date"] == pl.Datetime:
+                    mpdf = mpdf.with_columns(pl.col("trade_date").dt.date())
+                if rq_name not in mpdf.columns:
+                    for c in mpdf.columns:
+                        if c not in {"trade_date", "ts_code"}:
+                            mpdf = mpdf.rename({c: col_name})
+                            break
+                else:
+                    mpdf = mpdf.rename({rq_name: col_name})
+                if col_name not in mpdf.columns:
+                    continue
+                keep = mpdf.select(["trade_date", "ts_code", col_name])
+                out = out.join(keep, on=["trade_date", "ts_code"], how="left")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ricequant factor %s join skipped: %s", rq_name, exc)
+        if "market_cap" in out.columns and "total_market_cap" not in out.columns:
             out = out.with_columns(pl.col("market_cap").alias("total_market_cap"))
-            return out
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("ricequant market_cap join skipped: %s", exc)
-            return pldf
+        return out
 
     def _load_qlib_price(self, universe: str | list[str], start: date, end: date) -> pl.DataFrame:
         import importlib.util

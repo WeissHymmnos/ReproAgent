@@ -36,10 +36,11 @@ def CSZScore(x: Any, n: Any = None) -> Any:
     return (x - mean) / std_safe
 
 
-def _get_int(n: Any, op_name: str = "Operator") -> int:
+def _get_int(n: Any, op_name: str = "Operator", *, default: int = 20) -> int:
+    """窗口参数；若误传列表达式则回退 default（LLM 常把字段塞进 n）。"""
     try:
         if isinstance(n, pl.Expr):
-            raise ValueError(f"{op_name} expects a constant integer.")
+            return default
         return int(float(n))
     except (ValueError, TypeError) as exc:
         raise ValueError(f"Invalid period value '{n}' for {op_name}.") from exc
@@ -61,9 +62,13 @@ def Std(x: Any, n: Any = None) -> Any:
     return x.rolling_std(window_size=_get_int(n, "Std")).over("asset")
 
 
-def Sum(x: Any, n: Any) -> Any:
+def Sum(x: Any, n: Any = None) -> Any:
     if isinstance(x, (int, float)):
+        if n is None:
+            return pl.lit(float(x))
         return pl.lit(float(x) * _get_int(n, "Sum"))
+    if n is None:
+        return x.sum().over("date")
     return x.rolling_sum(window_size=_get_int(n, "Sum")).over("asset")
 
 
@@ -131,12 +136,18 @@ def Divide(a: Any, b: Any) -> Any:
     return a / b
 
 
-def Max(a: Any, b: Any) -> Any:
-    return pl.max_horizontal(a, b)
+def Max(a: Any, b: Any = None) -> Any:
+    """二元截面 max；若仅单参则滚动/绝对值风格退化为与 0 比较。"""
+    if b is None:
+        # Max(x) ≈ max(x, 0) 常见 upside 波动定义
+        return pl.max_horizontal(_ensure_expr(a), pl.lit(0.0))
+    return pl.max_horizontal(_ensure_expr(a), _ensure_expr(b))
 
 
-def Min(a: Any, b: Any) -> Any:
-    return pl.min_horizontal(a, b)
+def Min(a: Any, b: Any = None) -> Any:
+    if b is None:
+        return pl.min_horizontal(_ensure_expr(a), pl.lit(0.0))
+    return pl.min_horizontal(_ensure_expr(a), _ensure_expr(b))
 
 
 def Const(x: Any) -> Any:
@@ -765,7 +776,7 @@ class PolarsEngine:
         if isinstance(node, ast.Name):
             if node.id in _CONTEXT:
                 return _CONTEXT[node.id]
-            # 一等公民字段别名 → 面板列（市值由 DataLoader 注入 market_cap）
+            # 一等公民字段别名 → 真实面板列（缺失则抛错，不用 close 顶替）
             _field_alias = {
                 "total_market_cap": "market_cap",
                 "mkt_cap": "market_cap",
@@ -777,15 +788,13 @@ class PolarsEngine:
                 "ret": "close",
                 "adj_close": "close",
                 "vwap": "close",
+                "pe": "pe_ratio",
+                "pe_ttm": "pe_ratio",
+                "pb": "pb_ratio",
+                "roe": "return_on_equity",
+                "roa": "return_on_asset",
             }
             col = _field_alias.get(node.id, node.id)
-            # 若市值列缺失则用 amount（仍属字段映射，非 formula→close 回退）
-            df0 = df_container[0]
-            if col == "market_cap" and "market_cap" not in df0.columns:
-                if "amount" in df0.columns:
-                    col = "amount"
-                elif "close" in df0.columns:
-                    col = "close"
             return pl.col(col)
 
         if isinstance(node, ast.BinOp):

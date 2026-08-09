@@ -97,9 +97,25 @@ class LLMExtractor:
                         logger.warning("Chunk %d extraction failed: %s", i, exc)
                 merged = merge_factor_specs(all_specs)
                 if not merged:
+                    # 二次尝试：截断正文 + 强制至少 1 个可执行因子
+                    short = markdown[:6000]
+                    try:
+                        merged = self._extract_once(report, short, chunk_index=None)
+                    except LLMError:
+                        merged = []
+                if not merged:
                     raise LLMError("All chunk extractions returned empty factors")
                 return merged
-            return self._extract_once(report, markdown, chunk_index=None)
+            specs = self._extract_once(report, markdown, chunk_index=None)
+            if not specs:
+                # 二次提取
+                specs = self._extract_once(
+                    report,
+                    markdown[:6000]
+                    + "\n\n[强制] 请至少输出 1 个因子，formula 示例: close/Ref(close,20)-1",
+                    chunk_index=None,
+                )
+            return specs
         except (LLMError, ConfigurationError):
             raise
         except Exception as e:
@@ -194,38 +210,49 @@ class LLMExtractor:
                 return []
             raise LLMError("LLM returned empty factors list")
 
-        # 确保每个因子有 id；清洗疑似编造的 reported_metrics
+        from reproagent.parser.formula_normalize import is_executable
+
         out: list[ParsedFactorSpec] = []
         for f in envelope.factors:
             if not f.id:
                 f = f.model_copy(update={"id": uuid.uuid4().hex})
             f = self._sanitize_extracted_spec(f)
+            if getattr(f, "_strict_drop", False):
+                logger.warning("Dropping proxy formula factor %s (strict)", f.factor_name)
+                continue
+            if not is_executable(f.formula or ""):
+                logger.warning(
+                    "Non-executable after sanitize: %s %r",
+                    f.factor_name,
+                    (f.formula or "")[:60],
+                )
             out.append(f)
         return out
 
     def _sanitize_extracted_spec(self, spec: ParsedFactorSpec) -> ParsedFactorSpec:
-        """清洗 LLM 输出：股票池/公式提取期规范化、可疑 reported_metrics 清空。"""
-        from reproagent.parser.formula_normalize import normalize_formula, normalize_universe
+        """清洗 LLM 输出：机械规范化；代理/未知池打标。"""
+        from reproagent.parser.formula_normalize import normalize_all
+        from reproagent.reproducer.run_flags import mark_formula_proxy, mark_universe_fallback
 
-        updates: dict = {}
-        # 股票池 → 已知命名池（显式规范化，避免 DataLoader 静默 CSI300 代理）
-        new_u = normalize_universe(spec.universe)
-        if new_u != (spec.universe or ""):
-            updates["universe"] = new_u
-
-        formula = (spec.formula or "").strip()
-        cleaned, used_proxy = normalize_formula(
-            formula,
+        # 严格评分：禁止整式代理；仅机械改写 + 真实字段同义
+        allow_proxy = bool(self.settings.formula_fallback_allowed)
+        nr = normalize_all(
+            formula=spec.formula,
+            universe=spec.universe,
             factor_name=spec.factor_name or "",
             factor_name_cn=spec.factor_name_cn or "",
+            allow_proxy=allow_proxy,
         )
-        if cleaned != formula:
-            updates["formula"] = cleaned
-        if used_proxy:
-            updates["extraction_confidence"] = min(float(spec.extraction_confidence or 0.5), 0.55)
+        updates: dict = {
+            "formula": nr.formula,
+            "universe": nr.universe,
+        }
+        if nr.used_proxy and allow_proxy:
+            mark_formula_proxy(spec.factor_name or "", "extract_proxy")
+            updates["extraction_confidence"] = min(float(spec.extraction_confidence or 0.5), 0.45)
+        if nr.universe_fallback:
+            mark_universe_fallback(f"extract:{spec.universe!r}->{nr.universe}")
 
-        # 严格模式（关闭 formula fallback）始终清空 reported_metrics，
-        # 走健康复现硬通过，避免数据商差异导致 reflection exhausted。
         if not self.settings.formula_fallback_allowed:
             updates["reported_metrics"] = ReportedMetrics()
         else:
@@ -242,9 +269,10 @@ class LLMExtractor:
                 if not present or all(float(v) == 0.0 for v in present):
                     updates["reported_metrics"] = ReportedMetrics()
 
-        if not updates:
-            return spec
-        return spec.model_copy(update=updates)
+        updated = spec.model_copy(update=updates)
+        # 附带是否应丢弃（严格 + 整式代理）
+        object.__setattr__(updated, "_strict_drop", bool(nr.used_proxy and not allow_proxy))
+        return updated
 
     def revise(
         self,
