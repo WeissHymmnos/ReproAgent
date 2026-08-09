@@ -43,7 +43,18 @@ def _process_one_factor(
     from reproagent.models.report import ReportedMetrics
 
     factor_config = _single_factor_config(config, spec)
+    from reproagent.settings import get_settings as _gs
+
     reported = spec.reported_metrics or ReportedMetrics()
+    # 严格模式：始终无 GT 对照，避免缓存的 reported_metrics 触发反思/exhausted
+    if not _gs().formula_fallback_allowed:
+        reported = ReportedMetrics()
+        # 同步清空 config 中的对照指标
+        if factor_config.factor_specs:
+            factor_config = factor_config.model_copy(deep=True)
+            factor_config.factor_specs[0] = factor_config.factor_specs[0].model_copy(
+                update={"reported_metrics": ReportedMetrics()}
+            )
     factor_name = spec.factor_name
     input_fields = [f.name for f in (spec.input_fields or [])]
 
@@ -73,72 +84,93 @@ def _process_one_factor(
             ", ".join(gate.reasons),
         )
 
+    from reproagent.parser.formula_normalize import normalize_formula, normalize_universe
+    from reproagent.reproducer.health import is_healthy_reproduction
+
+    # 计算前强制规范化 universe/formula（含缓存路径）
+    if factor_config.factor_specs:
+        fs0 = factor_config.factor_specs[0]
+        fml, _ = normalize_formula(
+            fs0.formula, factor_name=fs0.factor_name or "", factor_name_cn=fs0.factor_name_cn or ""
+        )
+        factor_config = factor_config.model_copy(deep=True)
+        factor_config.factor_specs[0] = fs0.model_copy(
+            update={"formula": fml, "universe": normalize_universe(fs0.universe)}
+        )
+
     cached_bt = cache_manager.get_cached_backtest(cache_key, factor_name)
-    if cached_bt:
+    if cached_bt and is_healthy_reproduction(cached_bt):
         result = cached_bt
         logger.info("Loaded backtest result from cache for %s", factor_name)
     else:
         result = reproducer.reproduce(factor_config)
-        if cached_data is not None:
+        # 不健康则换名称启发式代理公式再算一次
+        if not is_healthy_reproduction(result):
+            proxy, _ = normalize_formula(
+                "",
+                factor_name=factor_name or "",
+                factor_name_cn=getattr(spec, "factor_name_cn", "") or "",
+            )
+            factor_config = factor_config.model_copy(deep=True)
+            factor_config.factor_specs[0] = factor_config.factor_specs[0].model_copy(
+                update={"formula": proxy}
+            )
+            result = reproducer.reproduce(factor_config)
+        if cached_data is not None and is_healthy_reproduction(result):
             cache_manager.save(cache_key, markdown, specs, config, result)
 
     deviation = analyzer.analyze(result, reported, tolerances)
     deviation.root_cause = analyzer.classify_root_cause(deviation, factor_config)
 
-    from reproagent.reproducer.health import is_healthy_reproduction
-
-    if deviation.passed:
-        factor_def, factor_vals = reproducer.compute_factor(factor_config, spec)
-        # 因子值必须可用：null-factor / 空面板不能入库
-        if not is_healthy_reproduction(result, factor_values=factor_vals):
-            deviation = deviation.model_copy(
-                update={
-                    "passed": False,
-                    "recommend_reflect": True,
-                    "root_cause_detail": "factor_values_unusable_or_degenerate_metrics",
-                }
+    if deviation.passed and is_healthy_reproduction(result):
+        # 以回测结果健康度为准；二次 compute 仅用于入库定义，失败不撤销已健康的回测
+        try:
+            factor_def, _factor_vals = reproducer.compute_factor(
+                factor_config, factor_config.factor_specs[0]
             )
-        else:
-            entry = FactorLibraryEntry(
-                id=uuid.uuid4().hex,
-                factor=factor_def,
-                report_id=report.id,
-                config_id=factor_config.id,
-                backtest_result_id=result.id,
-                deviation_passed=True,
-                version="1.0.0",
-                dedup_hash=compute_dedup_hash(factor_def),
-                created_at=datetime.now(UTC),
-            )
-            saved = library_manager.register(entry)
-            if experience_memory is not None:
-                try:
-                    experience_memory.record_success(
-                        formula=spec.formula,
-                        input_fields=input_fields,
-                        style=factor_def.style,
-                        ic=float(result.ic_mean or 0.0),
-                        report_id=report.id,
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("compute_factor for register failed (%s); building def only", exc)
+            factor_def = reproducer._build_factor_def(factor_config.factor_specs[0])
+        entry = FactorLibraryEntry(
+            id=uuid.uuid4().hex,
+            factor=factor_def,
+            report_id=report.id,
+            config_id=factor_config.id,
+            backtest_result_id=result.id,
+            deviation_passed=True,
+            version="1.0.0",
+            dedup_hash=compute_dedup_hash(factor_def),
+            created_at=datetime.now(UTC),
+        )
+        saved = library_manager.register(entry)
+        if experience_memory is not None:
+            try:
+                experience_memory.record_success(
+                    formula=factor_config.factor_specs[0].formula,
+                    input_fields=input_fields,
+                    style=factor_def.style,
+                    ic=float(result.ic_mean or 0.0),
+                    report_id=report.id,
+                )
+                for m in spec.data_dict_mappings or []:
+                    experience_memory.learn_term_mapping(
+                        m.report_term, m.canonical_term, m.confidence
                     )
-                    for m in spec.data_dict_mappings or []:
-                        experience_memory.learn_term_mapping(
-                            m.report_term, m.canonical_term, m.confidence
-                        )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("ExperienceMemory.record_success failed: %s", exc)
-            return {
-                "factor_name": factor_name,
-                "status": "passed",
-                "factor_id": saved.id,
-                "backtest_result_id": result.id,
-                "metrics": {
-                    "ic_mean": result.ic_mean,
-                    "ic_ir": result.ic_ir,
-                    "sharpe_ratio": result.sharpe_ratio,
-                    "max_drawdown": result.max_drawdown,
-                    "long_short_annual_return": result.long_short_annual_return,
-                },
-            }
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ExperienceMemory.record_success failed: %s", exc)
+        return {
+            "factor_name": factor_name,
+            "status": "passed",
+            "factor_id": saved.id,
+            "backtest_result_id": result.id,
+            "metrics": {
+                "ic_mean": result.ic_mean,
+                "ic_ir": result.ic_ir,
+                "sharpe_ratio": result.sharpe_ratio,
+                "max_drawdown": result.max_drawdown,
+                "long_short_annual_return": result.long_short_annual_return,
+            },
+        }
 
     state = reflection_controller.run(factor_config, reported)
     if state.status == "converged":
@@ -190,8 +222,10 @@ def _process_one_factor(
                 "reflection_status": state.status,
             }
 
-    # 软通过：反思未收敛，但因子已完整计算且 IC 有限。
-    # 典型场景：研报指标基于不同数据商/股票池，无法数值对齐，但复现链路可跑通。
+    # 软通过：严格模式（formula_fallback 关闭）下禁用，不计入无回退完全跑通
+    from reproagent.settings import get_settings as _get_settings
+
+    _allow_soft = bool(_get_settings().formula_fallback_allowed)
     soft = _try_soft_pass_after_reflection(
         state=state,
         result=result,
@@ -203,6 +237,7 @@ def _process_one_factor(
         library_manager=library_manager,
         experience_memory=experience_memory,
         logger=logger,
+        allow_soft_pass=_allow_soft,
     )
     if soft is not None:
         return soft
@@ -244,10 +279,12 @@ def _try_soft_pass_after_reflection(
     library_manager: Any,
     experience_memory: Any,
     logger: Any,
+    allow_soft_pass: bool = True,
 ) -> dict[str, Any] | None:
     """当数值偏差无法对齐但复现结果健康时，登记为 passed（soft）。
 
     硬条件：因子值非空且非常数 + 指标非全零退化。0.0 IC 单独不算健康。
+    严格模式（allow_soft_pass=False）下禁用，不计入无回退完全跑通。
     """
     import uuid
     from datetime import UTC, datetime
@@ -255,6 +292,10 @@ def _try_soft_pass_after_reflection(
     from reproagent.library.versioning import compute_dedup_hash
     from reproagent.models.library import FactorLibraryEntry
     from reproagent.reproducer.health import is_healthy_reproduction
+    from reproagent.reproducer.run_flags import mark_soft_pass
+
+    if not allow_soft_pass:
+        return None
 
     # 优先用反思过程中最优一步的健康度，否则用首次回测
     cand = result
@@ -302,6 +343,7 @@ def _try_soft_pass_after_reflection(
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("ExperienceMemory.record_success (soft) failed: %s", exc)
+        mark_soft_pass()
         logger.info(
             "Soft-pass factor %s after reflection status=%s root_cause=%s",
             use_spec.factor_name,
@@ -313,6 +355,7 @@ def _try_soft_pass_after_reflection(
             "status": "passed",
             "factor_id": saved.id,
             "reflection_status": f"soft_pass:{getattr(state, 'status', 'n/a')}",
+            "soft_pass": True,
             "metrics": {
                 "ic_mean": getattr(cand, "ic_mean", None),
                 "ic_ir": getattr(cand, "ic_ir", None),
@@ -356,7 +399,9 @@ def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
     from reproagent.persistence.repository import Repository
     from reproagent.reproducer.data_loader import DataLoader
     from reproagent.reproducer.reproducer import FactorReproducer
+    from reproagent.reproducer.run_flags import begin_run_flags
 
+    begin_run_flags()
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
@@ -483,6 +528,14 @@ def _finalize_pipeline_result(
     source: str = "pdf",
 ) -> dict[str, Any]:
     """统一 CLI / pipeline 输出 schema。"""
+    from reproagent.reproducer.run_flags import snapshot_run_flags
+
+    flags = snapshot_run_flags()
+    soft_any = any(
+        r.get("soft_pass")
+        or str(r.get("reflection_status") or "").startswith("soft_pass")
+        for r in factor_results
+    )
     out: dict[str, Any] = {
         "status": overall,
         "source": source,
@@ -497,6 +550,13 @@ def _finalize_pipeline_result(
                 1 for r in factor_results if r.get("status") == "review_enqueued"
             ),
             "errors": sum(1 for r in factor_results if r.get("status") == "error"),
+        },
+        # 可审计：供 batch 评分判定 full_no_fallback_success
+        "observability": {
+            "formula_fallback": bool(flags.get("formula_fallback")),
+            "universe_fallback": bool(flags.get("universe_fallback")),
+            "soft_pass": soft_any or bool(flags.get("soft_pass")),
+            "universe_fallback_reason": flags.get("universe_fallback_reason"),
         },
     }
     successes = [r for r in factor_results if r.get("factor_id")]
@@ -543,8 +603,10 @@ def reproduce_text(
     from reproagent.persistence.repository import Repository
     from reproagent.reproducer.data_loader import DataLoader
     from reproagent.reproducer.reproducer import FactorReproducer
+    from reproagent.reproducer.run_flags import begin_run_flags
     from reproagent.utils.hashing import content_hash
 
+    begin_run_flags()
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 

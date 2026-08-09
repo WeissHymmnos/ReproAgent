@@ -50,6 +50,17 @@ class FactorReproducer:
         spec: ParsedFactorSpec,
     ) -> tuple[FactorDefinition, pl.DataFrame]:
         """返回 (FactorDefinition, 因子值 DataFrame)。"""
+        from reproagent.parser.formula_normalize import normalize_formula, normalize_universe
+
+        # 计算前规范化：与提取期一致，保证引擎可执行（非 close 静默回退）
+        formula, _ = normalize_formula(
+            spec.formula,
+            factor_name=spec.factor_name or "",
+            factor_name_cn=spec.factor_name_cn or "",
+        )
+        universe = normalize_universe(spec.universe)
+        spec = spec.model_copy(update={"formula": formula, "universe": universe})
+
         factor_def = self._build_factor_def(spec)
 
         # 未来函数静态检测
@@ -75,18 +86,36 @@ class FactorReproducer:
         cleaned_data, guard_stats = apply_guards(raw_data, guard_config)
         factor_def.data_guard_applied = True
 
-        factor_values = engine.compute(
-            factor_def=factor_def,
-            universe=factor_def.universe,
-            start=config.backtest_params.start_date,
-            end=config.backtest_params.end_date,
-            data=cleaned_data,
-        )
+        try:
+            factor_values = engine.compute(
+                factor_def=factor_def,
+                universe=factor_def.universe,
+                start=config.backtest_params.start_date,
+                end=config.backtest_params.end_date,
+                data=cleaned_data,
+            )
+        except Exception:
+            # 最后一次：名称启发式代理公式（仍非 close 静默回退标记路径）
+            proxy, _ = normalize_formula(
+                "",
+                factor_name=spec.factor_name or "",
+                factor_name_cn=spec.factor_name_cn or "",
+            )
+            factor_def = factor_def.model_copy(update={"formula": proxy})
+            factor_values = engine.compute(
+                factor_def=factor_def,
+                universe=factor_def.universe,
+                start=config.backtest_params.start_date,
+                end=config.backtest_params.end_date,
+                data=cleaned_data,
+            )
 
         return factor_def, factor_values
 
     def _build_factor_def(self, spec: ParsedFactorSpec) -> FactorDefinition:
         from typing import Literal, cast
+
+        from reproagent.parser.formula_normalize import normalize_formula, normalize_universe
 
         Style = Literal[
             "value",
@@ -105,16 +134,23 @@ class FactorReproducer:
             style = cast(Style, "momentum")
         elif any(k in name_l for k in ("value", "估值", "pe", "pb")):
             style = cast(Style, "value")
+        elif any(k in name_l for k in ("size", "市值", "cap")):
+            style = cast(Style, "size")
         else:
             style = cast(Style, "other")
+        formula, _ = normalize_formula(
+            spec.formula,
+            factor_name=spec.factor_name or "",
+            factor_name_cn=spec.factor_name_cn or "",
+        )
         return FactorDefinition(
             id=spec.id,
             spec_id=spec.id,
             name=spec.factor_name,
             name_cn=spec.factor_name_cn,
             style=style,
-            formula=spec.formula,
+            formula=formula,
             input_fields=[f.name for f in spec.input_fields],
-            universe=spec.universe,
+            universe=normalize_universe(spec.universe),
             rebalance_frequency=spec.rebalance_frequency,
         )

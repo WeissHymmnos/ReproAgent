@@ -36,9 +36,20 @@ def test_resolve_named_universe_uses_index_components() -> None:
     fake_rq.index_components.return_value = ["000001.XSHE", "600000.XSHG"]
 
     with patch.object(loader, "_ensure_rqdatac_init", return_value=fake_rq):
-        codes = loader._resolve_ricequant_instruments("全A股", as_of=date(2024, 6, 1))
+        codes = loader._resolve_ricequant_instruments("csi300", as_of=date(2024, 6, 1))
     assert codes == ["000001.XSHE", "600000.XSHG"]
     fake_rq.index_components.assert_called()
+
+
+def test_unrecognized_universe_hard_fails() -> None:
+    from reproagent.exceptions import ReproductionError
+
+    settings = Settings(data_source="ricequant")
+    loader = DataLoader(settings)
+    fake_rq = MagicMock()
+    with patch.object(loader, "_ensure_rqdatac_init", return_value=fake_rq):
+        with pytest.raises(ReproductionError, match="Unrecognized"):
+            loader._resolve_ricequant_instruments("中信一级行业XYZ", as_of=date(2024, 6, 1))
 
 
 def test_load_ricequant_price_maps_columns() -> None:

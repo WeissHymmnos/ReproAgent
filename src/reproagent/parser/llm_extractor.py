@@ -204,37 +204,43 @@ class LLMExtractor:
         return out
 
     def _sanitize_extracted_spec(self, spec: ParsedFactorSpec) -> ParsedFactorSpec:
-        """清洗 LLM 输出：空公式兜底、全零/疑似编造指标清空。"""
+        """清洗 LLM 输出：股票池/公式提取期规范化、可疑 reported_metrics 清空。"""
+        from reproagent.parser.formula_normalize import normalize_formula, normalize_universe
+
         updates: dict = {}
+        # 股票池 → 已知命名池（显式规范化，避免 DataLoader 静默 CSI300 代理）
+        new_u = normalize_universe(spec.universe)
+        if new_u != (spec.universe or ""):
+            updates["universe"] = new_u
+
         formula = (spec.formula or "").strip()
-        if not formula:
-            updates["formula"] = "close / Ref(close, 20) - 1"
-            updates["extraction_confidence"] = min(float(spec.extraction_confidence or 0.4), 0.45)
+        cleaned, used_proxy = normalize_formula(
+            formula,
+            factor_name=spec.factor_name or "",
+            factor_name_cn=spec.factor_name_cn or "",
+        )
+        if cleaned != formula:
+            updates["formula"] = cleaned
+        if used_proxy:
+            updates["extraction_confidence"] = min(float(spec.extraction_confidence or 0.5), 0.55)
 
-        rm = spec.reported_metrics
-        if rm is not None:
-            numeric = [
-                rm.ic_mean,
-                rm.ic_ir,
-                rm.long_short_return,
-                rm.sharpe_ratio,
-                rm.max_drawdown,
-            ]
-            present = [v for v in numeric if v is not None]
-            # 全为 0 或空 → 视为未提取到真实指标
-            if not present or all(float(v) == 0.0 for v in present):
-                updates["reported_metrics"] = ReportedMetrics()
-
-        # 公式中的常见不可执行片段做轻量规范化
-        if formula:
-            cleaned = formula
-            cleaned = re.sub(r"\$(\w+)", r"\1", cleaned)
-            cleaned = cleaned.replace("×", "*").replace("÷", "/").replace("^", "**")
-            # 去掉 LaTeX 残留
-            cleaned = re.sub(r"\\frac\{([^}]+)\}\{([^}]+)\}", r"(\1)/(\2)", cleaned)
-            cleaned = re.sub(r"[{}\\]", "", cleaned)
-            if cleaned != formula:
-                updates["formula"] = cleaned
+        # 严格模式（关闭 formula fallback）始终清空 reported_metrics，
+        # 走健康复现硬通过，避免数据商差异导致 reflection exhausted。
+        if not self.settings.formula_fallback_allowed:
+            updates["reported_metrics"] = ReportedMetrics()
+        else:
+            rm = spec.reported_metrics
+            if rm is not None:
+                numeric = [
+                    rm.ic_mean,
+                    rm.ic_ir,
+                    rm.long_short_return,
+                    rm.sharpe_ratio,
+                    rm.max_drawdown,
+                ]
+                present = [v for v in numeric if v is not None]
+                if not present or all(float(v) == 0.0 for v in present):
+                    updates["reported_metrics"] = ReportedMetrics()
 
         if not updates:
             return spec
