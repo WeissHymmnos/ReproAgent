@@ -28,12 +28,17 @@ def test_is_cb_universe() -> None:
     assert is_cb_universe("csi300") is False
 
 
-def test_resolve_named_universe_uses_index_components() -> None:
+def test_resolve_named_universe_uses_index_components(tmp_path, monkeypatch) -> None:
     settings = Settings(data_source="ricequant")
     loader = DataLoader(settings)
 
     fake_rq = MagicMock()
     fake_rq.index_components.return_value = ["000001.XSHE", "600000.XSHG"]
+
+    # Isolate from host disk instrument cache
+    import reproagent.reproducer.data_loader as dl_mod
+
+    monkeypatch.setattr(dl_mod, "_RQ_INST_CACHE_DIR", tmp_path / "inst")
 
     with patch.object(loader, "_ensure_rqdatac_init", return_value=fake_rq):
         codes = loader._resolve_ricequant_instruments("csi300", as_of=date(2024, 6, 1))
