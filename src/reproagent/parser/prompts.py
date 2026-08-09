@@ -10,21 +10,26 @@ EXTRACTION_PROMPT = Template(
 对每个因子，提取：
 - factor_name: 英文名/规范化名
 - factor_name_cn: 研报中文原名
-- formula: 可执行伪代码，优先使用白名单算子：
-  Rank, Ref, Mean, Std, EMA, Corr, CSZScore, Delay, Sum, Max, Min, Abs, Log, Sign
-  示例: close / Ref(close, 20) - 1   或   -1 * Rank(Mean(volume, 20) / Mean(volume, 60))
-  避免 LaTeX、中文函数名、未定义变量；仅用量价字段 open/high/low/close/volume/amount
-- input_fields: 输入字段列表（name 用 close/volume 等规范名）
-- computation_steps: 有序计算步骤
-- universe: 优先 csi300 / csi500 / 全A股 / 全转债
+- formula: **单行可执行表达式**（Python 风格），只能使用：
+  算子: Rank, CSZScore, Ref, Mean, Std, Sum, Delta, EMA, Abs, Log, Sign, Sqrt, Pow, Max, Min
+  字段: open, high, low, close, volume, amount, market_cap, pe_ratio, pb_ratio, return_on_equity
+  示例: close/Ref(close,20)-1
+  示例: -1*CSZScore(Log(market_cap))
+  示例: CSZScore(return_on_equity)
+  示例: -1*CSZScore(pe_ratio)
+  禁止: LaTeX、中文、赋值句、叙述文字、未定义变量、Resid 多参回归
+- input_fields: 规范英文字段名
+- computation_steps: 步骤
+- universe: 仅 csi300 / csi500 / csi1000 / 全A股 / 全转债
 - rebalance_frequency
-- reported_metrics: **仅当正文/表格明确给出数值时填写**；否则全部保持 null。禁止编造 IC/夏普/回撤。
+- reported_metrics: 仅正文有明确数字时填写，否则全 null
 - extraction_confidence / source_pages
 
 研报 Markdown:
 {{ markdown }}
 
-缺失值用 null，不要编造。若无清晰因子公式，构造最接近的量价代理公式，confidence 可偏低但 formula 不可为空。
+缺失用 null。**至少输出 1 个因子**。每个因子 formula 必须是可执行单行表达式（见字段白名单）。
+若研报因子无法用白名单字段精确表达，仍须给出最接近的可执行量价/估值/ROE 表达式（如 close/Ref(close,20)-1 或 CSZScore(return_on_equity)），并相应降低 extraction_confidence。
 """
 )
 
