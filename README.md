@@ -35,6 +35,10 @@ APP_ENV=prod DATA_SOURCE=tushare uv run reproagent reproduce report.pdf
 uv run reproagent library --html
 uv run reproagent tui
 uv run reproagent mcp
+
+# 浏览器工作台（因子库 / 人工复核 / 研报复现）
+uv run reproagent serve --port 8765
+# 打开 http://127.0.0.1:8765/
 ```
 
 ## 系统架构
@@ -85,6 +89,7 @@ reproagent reproduce report.pdf
 reproagent text -f report.md [-t title] [-b broker]
 reproagent library [--html] [-s style]
 reproagent review --list | --approve ID | --reject ID
+reproagent serve [--host 127.0.0.1] [--port 8765]
 reproagent benchmark --list | --run ID | --run-all | --report
 reproagent mcp
 reproagent tui

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from reproagent.library.wiki_writer import safe_factor_filename
 from reproagent.models.library import FactorLibraryEntry
 from reproagent.persistence.paths import AppPaths
 
@@ -26,7 +27,7 @@ class IndexWriter:
         ]
         for e in sorted_entries:
             lines.append(
-                f"| [{e.factor.name_cn}](factors/{e.factor.name}.md) "
+                f"| [{e.factor.name_cn}](factors/{safe_factor_filename(e.factor.name)}.md) "
                 f"| {e.factor.style} | {e.version} | {e.status} "
                 f"| {e.dedup_hash[:8]} | {e.created_at:%Y-%m-%d %H:%M} |"
             )

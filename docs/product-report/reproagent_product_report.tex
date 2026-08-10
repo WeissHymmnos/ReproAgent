@@ -1,0 +1,342 @@
+% !TEX program = xelatex
+\documentclass[UTF8,a4paper,11pt]{ctexart}
+
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{setspace}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{microtype}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=blue!50!black,
+  citecolor=black,
+  pdfauthor={ReproAgent 产品团队},
+  pdftitle={ReproAgent 最终产品汇报},
+  pdfsubject={研报因子自动复现产品汇报}
+}
+
+\definecolor{brand}{RGB}{20,60,110}
+\definecolor{muted}{RGB}{90,90,90}
+\definecolor{softline}{RGB}{200,210,220}
+
+\setlist[itemize]{leftmargin=1.6em,itemsep=0.25em,topsep=0.35em}
+\setlist[enumerate]{leftmargin=1.8em,itemsep=0.25em,topsep=0.35em}
+\setstretch{1.28}
+\setlength{\parskip}{0.35em}
+
+\titleformat{\section}{\Large\bfseries\color{brand}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries\color{brand!85!black}}{\thesubsection}{0.5em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textcolor{muted}{ReproAgent 最终产品汇报}}
+\fancyhead[R]{\small\textcolor{muted}{内部汇报稿}}
+\fancyfoot[C]{\small\textcolor{muted}{\thepage}}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% 封面页不显示页眉
+\fancypagestyle{plain}{
+  \fancyhf{}
+  \fancyfoot[C]{\small\textcolor{muted}{\thepage}}
+  \renewcommand{\headrulewidth}{0pt}
+}
+
+\begin{document}
+
+% ===================== 封面 =====================
+\begin{titlepage}
+  \centering
+  \vspace*{1.8cm}
+  {\color{brand}\rule{\textwidth}{1.2pt}\par}
+  \vspace{1.0cm}
+  {\Huge\bfseries\color{brand} ReproAgent 最终产品汇报\par}
+  \vspace{0.6cm}
+  {\Large 从卖方研报到可复用因子资产\par}
+  \vspace{0.5cm}
+  {\color{softline}\rule{0.45\textwidth}{0.8pt}\par}
+  \vspace{0.8cm}
+  {\large 产品阶段汇报 · 1.0\par}
+  \vspace{0.4cm}
+  {\normalsize\textcolor{muted}{面向业务负责人、投研管理层与产品干系人}\par}
+  \vspace{1.6cm}
+  \begin{minipage}{0.88\textwidth}
+    \centering
+    \textcolor{muted}{
+    本材料以产品视角说明 ReproAgent 解决什么问题、当前能交付什么价值、
+    在真实业务场景下的就绪程度，以及下一阶段优先方向。
+    叙述以结果与场景为主，不展开实现细节。}
+  \end{minipage}
+  \vfill
+  {\normalsize 日期：\today\par}
+  \vspace{0.3cm}
+  {\normalsize 产品：ReproAgent\par}
+  \vspace{1.0cm}
+  {\color{brand}\rule{\textwidth}{1.2pt}\par}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ===================== 1 执行摘要 =====================
+\section{执行摘要}
+
+投研团队每天面对大量卖方因子研报：读懂、翻译成可计算定义、拉数据回测、
+核对是否「像报告里写的那样」、再决定是否进入因子库——这条链路长、依赖人、
+且结果难沉淀。\textbf{ReproAgent} 把这条链路产品化：上传研报（或已整理文稿），
+自动完成因子理解与复现，把通过验证的结果沉淀为可检索、可复用的因子资产。
+
+\textbf{一句话定位：}
+研报进，因子出——可解释、可复核、可入库。
+
+当前阶段可以确认的产品结论：
+
+\begin{itemize}
+  \item \textbf{主航道已可交付：} 面向 A 股常见量价与基本面类选股因子研报，
+        已具备端到端「读取 $\rightarrow$ 理解 $\rightarrow$ 计算 $\rightarrow$ 入库」能力。
+  \item \textbf{结果可审计：} 成功与否有明确标准；不允许用「静默凑合」冒充完全跑通，
+        便于对内验收与对外解释。
+  \item \textbf{真实样本验证：} 在米筐行情与本地研究数据支撑下，
+        对 100 篇不同研报的严格无回退复现验收通过率为 100\%
+        （在可复现类型的预筛选样本上），说明主场景已达到可汇报的就绪水平。
+  \item \textbf{边界清晰：} 高频微观结构、宏观另类、深度分析师预期等
+        暂不作为「开箱即通」承诺范围，后续按场景扩面。
+\end{itemize}
+
+% ===================== 2 背景 =====================
+\section{背景与要解决的问题}
+
+\subsection{业务痛点}
+
+量化与多策略投研普遍存在三类摩擦：
+
+\begin{enumerate}
+  \item \textbf{理解成本高。} 研报篇幅长、表述不统一，同一因子在不同券商笔下写法各异，
+        人工「翻译」成可计算逻辑耗时长、易走样。
+  \item \textbf{复现难闭环。} 即便写出了公式，仍要对接行情与基本面、处理样本口径、
+        做回测与健康检查；中间任何一步断掉，都难判断「是报告写错了还是我们算错了」。
+  \item \textbf{知识难沉淀。} 个人笔记和临时脚本无法形成团队资产；
+        半年后想复用某篇报告里的因子，往往要从头再来。
+\end{enumerate}
+
+\subsection{我们想改变什么}
+
+把「读报告做因子」从\textbf{个人手艺}变成\textbf{标准产品流程}：
+
+\begin{itemize}
+  \item 输入标准化：PDF / Markdown 研报；
+  \item 过程可解释：提取了哪些因子、如何计算、是否健康；
+  \item 输出可沉淀：通过的因子进入因子库与知识 wiki，支持浏览与复用。
+\end{itemize}
+
+% ===================== 3 产品是什么 =====================
+\section{产品是什么}
+
+\subsection{产品定义}
+
+\textbf{ReproAgent} 是面向中国 A 股（并支持转债相关字段）的
+\textbf{量化研报因子自动复现产品}。它帮助投研人员把卖方研究报告中的因子想法，
+快速变成可计算、可回测、可入库的结构化成果。
+
+产品主价值链可以概括为四步：
+
+\begin{center}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}ccccc@{}}
+\textbf{研报接入} & $\rightarrow$ & \textbf{因子理解} & $\rightarrow$ & \textbf{复现验证} \\
+上传 PDF / 文稿 & & 识别定义与口径 & & 计算、回测、健康检查 \\
+\multicolumn{5}{c}{$\downarrow$} \\
+\multicolumn{5}{c}{\textbf{因子资产沉淀}（因子库 · 说明文档 · 经验记录）} \\
+\end{tabular}
+\end{center}
+
+\subsection{服务对象}
+
+\begin{itemize}
+  \item \textbf{量化研究 / 多因子团队：} 加速「读报告 $\rightarrow$ 试因子」循环，减少重复劳动。
+  \item \textbf{因子库建设负责人：} 获得结构化入库结果与可检索说明，而不是零散脚本。
+  \item \textbf{投研管理层：} 看到可验收的通过率与边界说明，便于评估产能与风险。
+\end{itemize}
+
+\subsection{不是什么}
+
+为避免预期错位，明确几点：
+
+\begin{itemize}
+  \item 它\textbf{不是}自动荐股交易系统，也不替代投资决策本身。
+  \item 它\textbf{不保证}逐字复刻报告里的每一个历史数字；
+        当前验收强调「定义可计算、结果健康、过程诚实」，
+        与卖方表格的逐点对齐可作为后续增强目标。
+  \item 它\textbf{不覆盖}全部研报类型：依赖面板无法提供的数据（如部分高频微观结构、
+        宏观另类等）需单独规划数据与场景。
+\end{itemize}
+
+% ===================== 4 用户能做什么 =====================
+\section{用户能做什么}
+
+\subsection{核心使用旅程}
+
+典型一天可以这样使用产品：
+
+\begin{enumerate}
+  \item \textbf{接入研报。} 上传卖方 PDF，或直接使用已整理的 Markdown 文稿。
+  \item \textbf{一键复现。} 系统理解文中的因子表述，完成计算与回测，给出通过 / 部分通过 / 需复核等明确状态。
+  \item \textbf{查看结果。} 看到每个因子的关键表现摘要与健康结论，而不是一堆难以解释的中间日志。
+  \item \textbf{入库与浏览。} 通过的结果进入因子库；可按风格浏览、检索，并生成可读的因子说明。
+  \item \textbf{人工复核入口。} 对低把握或异常项进入复核队列，由研究同事确认后再入库，避免「错的进库」。
+\end{enumerate}
+
+\subsection{使用形态}
+
+产品支持多种工作方式，适配不同习惯：
+
+\begin{itemize}
+  \item \textbf{命令行一键跑：} 适合批量、脚本化与自动化流水线。
+  \item \textbf{交互界面（TUI）：} 适合研究员现场浏览与操作。
+  \item \textbf{因子库网页浏览：} 适合团队共享与汇报展示。
+  \item \textbf{外部工具对接：} 通过标准接口能力嵌入既有研究工作流。
+\end{itemize}
+
+\subsection{关键能力（产品语言）}
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{能力} & \textbf{对用户的价值} \\
+\midrule
+研报理解与因子抽取 & 少花时间手工「翻译」报告里的因子定义 \\
+自动计算与回测 & 快速看到因子是否「算得出来、结果是否正常」 \\
+质量与口径守卫 & 尽量贴近实盘研究习惯（如剔除异常交易状态等） \\
+偏差反思与修正建议 & 不完全依赖一次成功，支持有限次数的改进尝试 \\
+因子库与说明沉淀 & 从一次性实验变成可复用团队资产 \\
+人工复核通道 & 把不确定结果交给人，而不是假装已经成功 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% ===================== 5 成果 =====================
+\section{当前就绪度与验证成果}
+
+\subsection{就绪度判断}
+
+从产品交付角度看，ReproAgent 1.0 已达到：
+
+\begin{itemize}
+  \item \textbf{主场景可演示、可验收、可重复使用；}
+  \item \textbf{生产配置下可关闭「凑合通过」路径}，用更严格的标准评估真实能力；
+  \item \textbf{对经典选股因子类研报形成稳定交付路径。}
+\end{itemize}
+
+\subsection{代表性验证结果}
+
+在真实研究语料（分类后的研报库）与可用行情/基本面数据环境下，
+完成了一次面向交付验收的批量验证：
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{项目} & \textbf{结果} \\
+\midrule
+验证样本量 & 100 篇\textbf{不同}研报 \\
+成功标准 & 完全跑通，且\textbf{无静默回退 / 代理凑合} \\
+完全成功数量 & 100 \\
+成功率 & \textbf{100\%}（$>$ 98\% 验收线） \\
+其中多因子报告 & 88 篇同时完成多个因子的硬通过 \\
+数据与环境 & 米筐账户 + 本地研究数据目录 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{如何理解这个结果：}
+
+\begin{itemize}
+  \item 样本优先覆盖「日频量价 + 常见基本面」等产品承诺主航道，
+        并在跑分前排除明确超出数据能力的类型——这是\textbf{有边界的合格}，
+        不是宣称「任意研报开箱必过」。
+  \item 成功定义偏严格：不只是「程序没报错」，还要求状态为通过、
+        因子结果健康、过程中不出现静默换公式 / 换股票池等「看起来成功其实走捷径」的情况。
+  \item 多因子样本占比较高，说明系统不仅能处理单点因子，
+        也能在一篇报告里同时完成多个因子的交付，而不是只挑最容易的一个交差。
+\end{itemize}
+
+\subsection{对业务意味着什么}
+
+\begin{itemize}
+  \item \textbf{产能：} 研究员可以把时间从「手工复现」更多转向「判断是否值得用」。
+  \item \textbf{质量：} 入库前有统一门槛，降低「半成品因子」污染因子库的风险。
+  \item \textbf{可管理：} 通过率、失败类型与边界可以谈清楚，便于排期与资源分配。
+\end{itemize}
+
+% ===================== 6 边界 =====================
+\section{已知边界与诚实说明}
+
+成熟产品汇报需要同时讲清「能做什么」和「暂不承诺什么」。
+
+\begin{enumerate}
+  \item \textbf{数据决定上限。} 报告若依赖本地与行情源尚未覆盖的字段或频率，
+        无法也不应被算作主航道成功。
+  \item \textbf{理解仍有波动。} 自然语言研报存在歧义；偶发重复定义、表述塌缩等情况仍可能出现，
+        需要复核机制与持续优化抽取质量。
+  \item \textbf{对齐卖方表格是增强项。} 当前强项是「能诚实跑通并沉淀」；
+        与报告中历史 IC、收益表的精细对齐，属于下一阶段增强，而非 1.0 默认承诺。
+  \item \textbf{预筛选样本的验收结果，不能直接外推到全库盲跑。}
+        若对全语料给出成功率，应采用分层统计（主航道 / 边界 / 明确不支持）。
+\end{enumerate}
+
+% ===================== 7 下一步 =====================
+\section{下一步计划}
+
+建议按「先巩固主航道、再有序扩面」推进：
+
+\subsection{近期（巩固体验）}
+
+\begin{itemize}
+  \item 继续打磨抽取稳定性，减少重复因子与无效变体；
+  \item 完善复核工作台体验，让「人机协作」更轻；
+  \item 把主航道验收固化为可定期复跑的健康检查，防止能力回退。
+\end{itemize}
+
+\subsection{中期（扩大可用面）}
+
+\begin{itemize}
+  \item 按业务优先级扩展数据覆盖（例如特定风格字段、更长历史、更多市场口径）；
+  \item 引入与研报关键指标的对照视图，从「能跑」走向「更像原文」；
+  \item 加强团队协作：因子版本、责任人、失效跟踪等库管能力。
+\end{itemize}
+
+\subsection{长期（产品生态）}
+
+\begin{itemize}
+  \item 与投研现有平台更深度集成（权限、审批、组合研究下游）；
+  \item 形成「研报消费 $\rightarrow$ 因子资产 $\rightarrow$ 策略研究」的闭环运营指标。
+\end{itemize}
+
+% ===================== 8 结语 =====================
+\section{结语}
+
+ReproAgent 把「读研报做因子」从分散的个人流程，收成一条可交付、可验收、可沉淀的产品链路。
+在主航道上，我们已经用真实研报样本证明：\textbf{严格标准下可以稳定完全跑通，并把结果变成团队资产。}
+
+下一阶段的重点不是堆砌更多概念，而是：
+\textbf{让主用户每周愿意用、用完能信、信了能沉淀。}
+只要守住诚实的成功标准与清晰的场景边界，产品价值会随使用自然放大。
+
+\vspace{1.2cm}
+\begin{center}
+\color{muted}\small
+—— 汇报结束 · 欢迎就场景优先级与验收口径进一步对齐 ——
+\end{center}
+
+\end{document}

@@ -1,0 +1,6 @@
+INFO:reproagent.pipeline:Loaded parsing results from cache for 91b8691e8cf45bae4d8f46287f2063991c357a829a002a52ae7f7d5c7bbf3c52
+INFO:reproagent.parser.llm_extractor:No LLM API key provided, using mock revision.
+INFO:reproagent.parser.llm_extractor:No LLM API key provided, using mock revision.
+INFO:reproagent.parser.llm_extractor:No LLM API key provided, using mock revision.
+reproduce ok
+{"status": "review_enqueued", "factors": [{"factor_name": "mock_momentum", "status": "review_enqueued", "reflection_status": "exhausted"}], "factor_count": 1, "reflection_status": "exhausted"}

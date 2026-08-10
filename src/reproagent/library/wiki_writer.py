@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+import re
+
 from reproagent.models.library import FactorLibraryEntry
 from reproagent.persistence.paths import AppPaths
+
+
+def safe_factor_filename(name: str) -> str:
+    """因子名可能含 E/P、EP/P 等斜杠；禁止当路径分量。"""
+    s = re.sub(r'[\\/:*?"<>|\s]+', "_", (name or "").strip())
+    s = s.strip("._") or "factor"
+    return s[:120]
 
 
 class WikiWriter:
@@ -55,5 +64,5 @@ class WikiWriter:
                 "",
             ]
         )
-        out_path = self.paths.wiki_factors_dir / f"{f.name}.md"
+        out_path = self.paths.wiki_factors_dir / f"{safe_factor_filename(f.name)}.md"
         out_path.write_text("\n".join(lines), encoding="utf-8")

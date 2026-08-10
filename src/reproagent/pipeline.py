@@ -89,7 +89,7 @@ def _process_one_factor(
     from reproagent.reproducer.run_flags import mark_formula_proxy, mark_universe_fallback
 
     allow_proxy = bool(_gs().formula_fallback_allowed)
-    # 计算前规范化（严格模式禁止整式代理）
+    # 计算前规范化（严格模式禁止整式代理：proxy 直接 review，不冒充 passed）
     if factor_config.factor_specs:
         fs0 = factor_config.factor_specs[0]
         nr = normalize_all(
@@ -101,8 +101,28 @@ def _process_one_factor(
         )
         if nr.used_proxy:
             mark_formula_proxy(fs0.factor_name or "", "pipeline_proxy")
+            if not allow_proxy:
+                repository.enqueue_review(
+                    report.id,
+                    f"Strict mode: proxy formula rejected for {factor_name}",
+                )
+                return {
+                    "factor_name": factor_name,
+                    "status": "review_enqueued",
+                    "reflection_status": "strict_proxy_rejected",
+                }
         if nr.universe_fallback:
             mark_universe_fallback(f"pipeline:{fs0.universe!r}->{nr.universe}")
+            if not allow_proxy:
+                repository.enqueue_review(
+                    report.id,
+                    f"Strict mode: universe fallback rejected for {factor_name}",
+                )
+                return {
+                    "factor_name": factor_name,
+                    "status": "review_enqueued",
+                    "reflection_status": "strict_universe_fallback_rejected",
+                }
         factor_config = factor_config.model_copy(deep=True)
         factor_config.factor_specs[0] = fs0.model_copy(
             update={"formula": nr.formula, "universe": nr.universe}
@@ -176,6 +196,9 @@ def _process_one_factor(
             "status": "passed",
             "factor_id": saved.id,
             "backtest_result_id": result.id,
+            "formula": getattr(factor_config.factor_specs[0], "formula", None)
+            if factor_config.factor_specs
+            else None,
             "metrics": {
                 "ic_mean": result.ic_mean,
                 "ic_ir": result.ic_ir,
@@ -254,51 +277,6 @@ def _process_one_factor(
     )
     if soft is not None:
         return soft
-
-    # 严格模式最后机会：用与因子名语义一致的可执行式重算（字段均在面板内，不标 proxy）
-    if not _allow_soft and not is_healthy_reproduction(result):
-        from reproagent.parser.formula_normalize import proxy_formula_from_name, is_executable
-
-        domain_fml = proxy_formula_from_name(
-            factor_name or "", getattr(spec, "factor_name_cn", "") or ""
-        )
-        if is_executable(domain_fml):
-            try:
-                cfg2 = factor_config.model_copy(deep=True)
-                cfg2.factor_specs[0] = cfg2.factor_specs[0].model_copy(
-                    update={"formula": domain_fml}
-                )
-                result2 = reproducer.reproduce(cfg2)
-                if is_healthy_reproduction(result2):
-                    # 直接硬通过入库
-                    factor_def = reproducer._build_factor_def(cfg2.factor_specs[0])
-                    entry = FactorLibraryEntry(
-                        id=uuid.uuid4().hex,
-                        factor=factor_def,
-                        report_id=report.id,
-                        config_id=cfg2.id,
-                        backtest_result_id=result2.id,
-                        deviation_passed=True,
-                        version="1.0.0",
-                        dedup_hash=compute_dedup_hash(factor_def),
-                        created_at=datetime.now(UTC),
-                    )
-                    saved = library_manager.register(entry)
-                    return {
-                        "factor_name": factor_name,
-                        "status": "passed",
-                        "factor_id": saved.id,
-                        "backtest_result_id": result2.id,
-                        "metrics": {
-                            "ic_mean": result2.ic_mean,
-                            "ic_ir": result2.ic_ir,
-                            "sharpe_ratio": result2.sharpe_ratio,
-                            "max_drawdown": result2.max_drawdown,
-                            "long_short_annual_return": result2.long_short_annual_return,
-                        },
-                    }
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Domain formula retry failed for %s: %s", factor_name, exc)
 
     reason = f"Reflection failed for {factor_name}: {state.status}"
     repository.enqueue_review(report.id, reason)
@@ -441,21 +419,6 @@ def _aggregate_status(factor_results: list[dict[str, Any]]) -> str:
     return next(iter(statuses))
 
 
-def _keep_successful_factors(
-    factor_results: list[dict[str, Any]],
-    *,
-    strict: bool,
-) -> list[dict[str, Any]]:
-    """严格模式下仅保留已成功复现的因子，避免单因子失败拖成 partial。
-
-    失败因子不计入结果列表（未用错误代理冒充成功）。
-    """
-    if not strict:
-        return factor_results
-    kept = [r for r in factor_results if r.get("status") in {"passed", "converged"}]
-    return kept if kept else factor_results
-
-
 def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
     import logging
 
@@ -503,14 +466,19 @@ def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
     cache_manager = CacheManager(paths)
     cache_key = report.file_hash
 
-    # 2. Parse (with cache)
+    # 2. Parse (with cache). 严格模式跳过 parse cache，避免冻结旧版 domain/proxy 公式。
     parser = ReportParser(settings)
     cached_data = cache_manager.get_cached(cache_key)
     markdown = ""
-    if cached_data:
+    use_parse_cache = bool(cached_data) and bool(settings.formula_fallback_allowed)
+    if use_parse_cache:
         markdown, specs, config = cached_data
         logger.info("Loaded parsing results from cache for %s", cache_key)
     else:
+        if cached_data and not settings.formula_fallback_allowed:
+            logger.info(
+                "Strict mode: ignoring parse cache for %s (re-extract)", cache_key
+            )
         specs = parser.parse(report)
         if not specs:
             repository.enqueue_review(report.id, "No factors extracted")
@@ -526,12 +494,17 @@ def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
             if hasattr(parser.layout_extractor, "extract")
             else ""
         )
-        cache_manager.save(
-            cache_key=cache_key,
-            markdown=markdown,
-            specs=specs,
-            config=config,
-        )
+        # 含 formula_proxy 的提取不写 cache，避免无旗标复用
+        from reproagent.reproducer.run_flags import get_run_flags
+
+        if not get_run_flags().get("formula_proxy"):
+            cache_manager.save(
+                cache_key=cache_key,
+                markdown=markdown,
+                specs=specs,
+                config=config,
+            )
+        cached_data = None
 
     # 3–6. Per-factor: reproduce → deviation → reflection → library
     from reproagent.library.experience_memory import ExperienceMemory
@@ -577,62 +550,16 @@ def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Factor %s failed: %s", spec.factor_name, exc)
-            # 严格模式：单因子失败时尝试一次字段补全后的动量式（并标 proxy）
-            from reproagent.parser.formula_normalize import (
-                is_executable,
-                mechanical_rewrite,
-                coerce_unknown_names,
-                proxy_formula_from_name,
+            repository.enqueue_review(
+                report.id, f"Factor {spec.factor_name} failed: {exc}"
             )
-            from reproagent.reproducer.run_flags import mark_formula_proxy
-            from reproagent.settings import get_settings as _gs2
-
-            recovered = None
-            try:
-                fml = coerce_unknown_names(mechanical_rewrite(spec.formula or ""))
-                if is_executable(fml):
-                    cfg = config.model_copy(deep=True)
-                    cfg.factor_specs = [
-                        spec.model_copy(update={"formula": fml, "universe": "csi300"})
-                    ]
-                    recovered = _process_one_factor(
-                        spec=cfg.factor_specs[0],
-                        config=cfg,
-                        report=report,
-                        markdown=markdown,
-                        specs=specs if not cached_data else cached_data[1],
-                        cache_key=cache_key + ":recover",
-                        cache_manager=cache_manager,
-                        cached_data=None,
-                        reproducer=reproducer,
-                        analyzer=analyzer,
-                        tolerances=tolerances,
-                        library_manager=library_manager,
-                        reflection_controller=reflection_controller,
-                        repository=repository,
-                        logger=logger,
-                        experience_memory=experience_memory,
-                    )
-                # 严格模式不整式 proxy 恢复；失败则记 error，后续可被 keep_successful 剔除
-            except Exception as exc2:  # noqa: BLE001
-                logger.warning("Factor recover failed for %s: %s", spec.factor_name, exc2)
-                recovered = None
-            if recovered and recovered.get("status") in {"passed", "converged"}:
-                one = recovered
-            else:
-                repository.enqueue_review(
-                    report.id, f"Factor {spec.factor_name} failed: {exc}"
-                )
-                one = {
-                    "factor_name": spec.factor_name,
-                    "status": "error",
-                    "error": str(exc),
-                }
+            one = {
+                "factor_name": spec.factor_name,
+                "status": "error",
+                "error": str(exc),
+            }
         factor_results.append(one)
 
-    factor_results = _keep_successful_factors(
-        factor_results, strict=not settings.formula_fallback_allowed
-    )
     return _finalize_pipeline_result(
         overall=_aggregate_status(factor_results),
         factor_results=factor_results,
@@ -680,6 +607,8 @@ def _finalize_pipeline_result(
             "soft_pass": soft_any or bool(flags.get("soft_pass")),
             "universe_fallback_reason": flags.get("universe_fallback_reason"),
             "proxy_factors": list(flags.get("proxy_factors") or []),
+            "recovery_used": bool(flags.get("recovery_used")),
+            "recovery_reasons": list(flags.get("recovery_reasons") or []),
         },
     }
     successes = [r for r in factor_results if r.get("factor_id")]
@@ -758,14 +687,19 @@ def reproduce_text(
     cache_manager = CacheManager(paths)
     cache_key = report.file_hash
 
-    # Parse from text (skip LayoutExtractor)
+    # Parse from text (skip LayoutExtractor). 严格模式跳过 parse cache。
     parser = ReportParser(settings)
     cached_data = cache_manager.get_cached(cache_key)
     markdown = text
-    if cached_data:
+    use_parse_cache = bool(cached_data) and bool(settings.formula_fallback_allowed)
+    if use_parse_cache:
         _, specs, config = cached_data
         logger.info("Loaded parsing results from cache for %s", cache_key)
     else:
+        if cached_data and not settings.formula_fallback_allowed:
+            logger.info(
+                "Strict mode: ignoring parse cache for %s (re-extract)", cache_key
+            )
         specs = parser.parse_text(report, text)
         if not specs:
             repository.enqueue_review(report.id, "No factors extracted from text")
@@ -776,12 +710,16 @@ def reproduce_text(
                 source="text",
             )
         config = parser.build_config(specs, report)
-        cache_manager.save(
-            cache_key=cache_key,
-            markdown=markdown,
-            specs=specs,
-            config=config,
-        )
+        from reproagent.reproducer.run_flags import get_run_flags
+
+        if not get_run_flags().get("formula_proxy"):
+            cache_manager.save(
+                cache_key=cache_key,
+                markdown=markdown,
+                specs=specs,
+                config=config,
+            )
+        cached_data = None
 
     # Per-factor reproduction (same as reproduce_report)
     from reproagent.library.experience_memory import ExperienceMemory
@@ -837,9 +775,6 @@ def reproduce_text(
             }
         factor_results.append(one)
 
-    factor_results = _keep_successful_factors(
-        factor_results, strict=not settings.formula_fallback_allowed
-    )
     return _finalize_pipeline_result(
         overall=_aggregate_status(factor_results),
         factor_results=factor_results,

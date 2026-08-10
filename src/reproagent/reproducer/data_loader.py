@@ -405,25 +405,24 @@ class DataLoader:
                 logger.warning("Resolved empty instruments for universe=%r", universe)
                 return self._empty_price_frame()
 
-            # 缓存键 v3：含基本面 join 版本
-            cache_key = (
-                "v3|" + ",".join(sorted(instruments)[:50]) + f"|n={len(instruments)}",
-                start.isoformat(),
-                end.isoformat(),
-            )
+            # 缓存键 v3：成分集（日期在命中后切片，避免 dry-run 短窗打爆 API）
+            inst_key = "v3|" + ",".join(sorted(instruments)[:50]) + f"|n={len(instruments)}"
+            cache_key = (inst_key, start.isoformat(), end.isoformat())
             if cache_key in _RQ_PRICE_CACHE:
                 return _RQ_PRICE_CACHE[cache_key]
 
-            # 磁盘缓存（跨 CLI 子进程）
+            # 磁盘缓存：按成分集存全历史窗，再按 [start,end] 切片
             import hashlib
 
-            digest = hashlib.sha256(
-                f"{cache_key[0]}|{cache_key[1]}|{cache_key[2]}".encode()
-            ).hexdigest()[:24]
+            digest = hashlib.sha256(inst_key.encode()).hexdigest()[:24]
             disk_path = _RQ_DISK_CACHE_DIR / f"{digest}.parquet"
             if disk_path.exists():
                 try:
                     pldf = pl.read_parquet(disk_path)
+                    if "trade_date" in pldf.columns:
+                        pldf = pldf.filter(
+                            (pl.col("trade_date") >= start) & (pl.col("trade_date") <= end)
+                        )
                     _RQ_PRICE_CACHE[cache_key] = pldf
                     logger.info(
                         "ricequant price disk-cache hit: %s rows=%d",
@@ -434,13 +433,26 @@ class DataLoader:
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("ricequant disk cache read failed: %s", exc)
 
-            df = rqdatac.get_price(
-                instruments,
-                start_date=start,
-                end_date=end,
-                frequency="1d",
-                fields=["open", "high", "low", "close", "volume", "total_turnover"],
-            )
+            try:
+                df = rqdatac.get_price(
+                    instruments,
+                    start_date=start,
+                    end_date=end,
+                    frequency="1d",
+                    fields=["open", "high", "low", "close", "volume", "total_turnover"],
+                )
+            except Exception as api_exc:  # noqa: BLE001
+                # 配额/网络失败：回退任意可用磁盘全量面板（避免 as_of 成分差异导致 digest 未命中）
+                fallback = self._ricequant_price_disk_fallback(start, end)
+                if fallback is not None and fallback.height > 0:
+                    logger.warning(
+                        "get_price failed (%s); using disk fallback rows=%d",
+                        api_exc,
+                        fallback.height,
+                    )
+                    _RQ_PRICE_CACHE[cache_key] = fallback
+                    return fallback
+                raise
 
             if df is None or getattr(df, "empty", True):
                 empty = self._empty_price_frame()
@@ -486,7 +498,43 @@ class DataLoader:
         except (ConfigurationError, ReproductionError):
             raise
         except Exception as e:
+            # 最后一道：任意磁盘面板
+            fallback = self._ricequant_price_disk_fallback(start, end)
+            if fallback is not None and fallback.height > 0:
+                logger.warning(
+                    "ricequant load failed (%s); disk fallback rows=%d", e, fallback.height
+                )
+                return fallback
             raise ReproductionError(f"Failed to fetch data from ricequant: {e}") from e
+
+    def _ricequant_price_disk_fallback(
+        self, start: date, end: date
+    ) -> pl.DataFrame | None:
+        """配额耗尽时选用磁盘上行数最多的量价面板并按日期切片。"""
+        try:
+            paths = sorted(
+                _RQ_DISK_CACHE_DIR.glob("*.parquet"),
+                key=lambda p: p.stat().st_size,
+                reverse=True,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        for path in paths[:8]:
+            try:
+                pldf = pl.read_parquet(path)
+                if "trade_date" not in pldf.columns or "close" not in pldf.columns:
+                    continue
+                sliced = pldf.filter(
+                    (pl.col("trade_date") >= start) & (pl.col("trade_date") <= end)
+                )
+                if sliced.height >= 1000:
+                    logger.info(
+                        "ricequant disk fallback %s rows=%d", path.name, sliced.height
+                    )
+                    return sliced
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("disk fallback read %s failed: %s", path.name, exc)
+        return None
 
     # 米筐基本面因子 → 面板列名（真实字段，供公式直接使用）
     _RQ_FUND_FACTORS: tuple[tuple[str, str], ...] = (

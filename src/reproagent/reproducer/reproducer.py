@@ -63,9 +63,23 @@ class FactorReproducer:
         )
         if nr.used_proxy:
             mark_formula_proxy(spec.factor_name or "", "compute_proxy")
+            if not allow_proxy:
+                from reproagent.exceptions import ReproductionError
+
+                raise ReproductionError(
+                    f"Strict mode: proxy formula rejected for {spec.factor_name!r}"
+                )
+        uni = nr.universe
         if nr.universe_fallback:
             mark_universe_fallback(f"compute:{spec.universe!r}->{nr.universe}")
-        spec = spec.model_copy(update={"formula": nr.formula, "universe": nr.universe})
+            if not allow_proxy:
+                from reproagent.exceptions import ReproductionError
+
+                raise ReproductionError(
+                    f"Strict mode: universe fallback rejected for {spec.factor_name!r} "
+                    f"({spec.universe!r}→{nr.universe})"
+                )
+        spec = spec.model_copy(update={"formula": nr.formula, "universe": uni})
 
         factor_def = self._build_factor_def(spec)
 
