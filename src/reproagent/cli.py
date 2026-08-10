@@ -330,6 +330,18 @@ def tui() -> None:
 
 
 @app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", help="绑定地址"),
+    port: int = typer.Option(8765, "--port", "-p", help="端口"),
+) -> None:
+    """启动浏览器工作台（因子库 / 人工复核 / 研报复现）。"""
+    from reproagent.web.app import serve as serve_web
+
+    typer.echo(f"Starting ReproAgent workstation on http://{host}:{port}/")
+    serve_web(host=host, port=port)
+
+
+@app.command()
 def benchmark(
     list_reports: bool = typer.Option(False, "--list", "-l", help="列出所有基准报告及其状态"),
     run: str | None = typer.Option(None, "--run", help="对指定报告（report_id）运行全链路比对"),

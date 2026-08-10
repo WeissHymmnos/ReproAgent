@@ -28,8 +28,13 @@ EXTRACTION_PROMPT = Template(
 研报 Markdown:
 {{ markdown }}
 
-缺失用 null。**至少输出 1 个因子**。每个因子 formula 必须是可执行单行表达式（见字段白名单）。
-若研报因子无法用白名单字段精确表达，仍须给出最接近的可执行量价/估值/ROE 表达式（如 close/Ref(close,20)-1 或 CSZScore(return_on_equity)），并相应降低 extraction_confidence。
+缺失用 null。**输出研报中所有可识别因子**（可多个，勿合并成一个）。
+每个 formula 必须是可执行单行表达式（仅白名单算子/字段）。
+时序算子 Std/Mean/Sum/EMA/Delta 必须带整数窗口（如 Std(x,20)、Mean(volume,20)）。
+若某因子依赖另类数据/图网络/分析师一致预期等**白名单外字段**，**不要编造** ROE/动量/市值顶替，
+也不要写未定义变量——直接省略该因子。
+universe 只能是 csi300 / csi500 / csi1000 / 全A股 / 全转债（与正文一致）。
+禁止罐头式一律输出 close/Ref(close,20)-1 或 CSZScore(return_on_equity)，除非正文明确是该因子。
 """
 )
 

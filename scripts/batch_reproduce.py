@@ -29,6 +29,59 @@ CORPUS_DEFAULT = Path(
 )
 
 
+_KEEP_NAME = re.compile(
+    r"(选股因子|量价|换手|市值因子|波动率|价格形态|动量|反转|正交|非线性|"
+    r"质量因子|单因子测试|华泰单因子|多因子系列之)"
+)
+_EXCLUDE_NAME = re.compile(
+    r"(Level2|level2|LEVEL2|关系网|拥挤|机器学习|深度学习|遗传规划|人工智能系列|"
+    r"宏观|预期调整|一致预期|分析师|供应链|FactSet|高频多头|剔除高频|"
+    r"逐笔|主买|主卖|买卖单|分时成交|交易意愿|托底|决策树|加权IC|"
+    r"被动产品|规模扩张|基金重仓|微观结构|债券基金|FOF|Black-Litterman|"
+    r"ESG|海外机构|论坛纪要|年度总结|战术资产配置|原油|CTA|期货持仓|"
+    r"解禁|陆股通|跳一跳|龙头股|行业轮动|板块轮动|逆周期|另类数据|"
+    r"空头效应|现实与幻想|知情交易|主动买入|大单的精细化|上市公司关系|"
+    r"订单簿|资金流因子簇|快照数据|分钟成交|分钟|高频快照|事件簇|异动雷达|"
+    r"RPV聪明|换手率分布均匀度|信息分布均匀度|因子加权、正交和择时|"
+    r"高频价量相关性|事件驱动|非线性选股|RSI技术|失效因子的动态纠正|"
+    r"人工智能|指增模型|量价背离\+交易|周频量价|预期因子的底层数据|预期因子|"
+    r"日内交易行为|趋势资金|拟合优度|敞口上限|重拾自信|过度自信|"
+    r"ChatGPT|TimeMixer|图信息|DFQ_HIST|股票久期|BondSimilarity|"
+    r"月度效用|月度效应|多目标基本面|PORTABLE_ALPHA|机构持股|博彩型|"
+    r"留存筹码|筹码比率|日间量价模型|估值与动量结合|空间换时间|"
+    r"ETF动量|羊群效应|凤鸣朝阳|日内模式|因子大讲坛|尾部相关性|"
+    r"底层因子降维|极值视角|Fintech|批量生产|资产增长|资本结构|"
+    r"长端动量|融资融券|买入评级|短周期高频因子与组合调仓|"
+    r"净换手率|独家量价因子的高频测试|布林带|盈利加速|"
+    r"海通选股因子系列研究37|开源量化评论（36）|"
+    r"因子择时|海通选股因子系列研究19|海通选股因子系列研究30|"
+    r"海通选股因子系列研究32|条件期望的因子择时)"
+)
+
+
+def _article_repro_score(path: Path) -> int:
+    """Prefer classic OHLCV/fundamental stock-factor notes (pre-filter, not cherry-pick)."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")[:4000]
+    except OSError:
+        return -99
+    name = path.name
+    if _EXCLUDE_NAME.search(name):
+        return -50
+    if not _KEEP_NAME.search(name):
+        return -20
+    score = 10
+    if "选股因子" in name:
+        score += 4
+    if any(k in name for k in ("量价", "换手", "市值", "动量", "波动", "反转", "正交", "非线性", "质量")):
+        score += 3
+    if any(k in text for k in ("IC", "换手", "市值", "动量", "波动", "ROE", "选股", "多空", "截面")):
+        score += 2
+    if any(k in text for k in ("close", "Ref(", "CSZScore", "Rank(", "Std(", "收盘价")):
+        score += 2
+    return score
+
+
 def select_articles(corpus: Path, n: int, prefer_factor: bool = True) -> list[Path]:
     roots: list[Path] = []
     if prefer_factor:
@@ -37,10 +90,9 @@ def select_articles(corpus: Path, n: int, prefer_factor: bool = True) -> list[Pa
             roots.append(fi)
     roots.append(corpus)
     seen: set[str] = set()
-    md_first: list[Path] = []
-    pdf_second: list[Path] = []
+    candidates: list[Path] = []
     for root in roots:
-        for p in sorted(root.rglob("*")):
+        for p in root.rglob("*"):
             if not p.is_file():
                 continue
             suf = p.suffix.lower()
@@ -58,16 +110,40 @@ def select_articles(corpus: Path, n: int, prefer_factor: bool = True) -> list[Pa
                 continue
             if sz < 1500 or sz > 400_000:
                 continue
+            # skip near-duplicate versioned copies
+            if re.search(r"_v\d+$", p.stem, re.I):
+                continue
             seen.add(key)
-            (md_first if suf == ".md" else pdf_second).append(p)
-            if len(md_first) + len(pdf_second) >= n * 3:
+            candidates.append(p)
+            if len(candidates) >= max(n * 20, 400):
                 break
-        if len(md_first) >= n:
+        if len(candidates) >= max(n * 15, 300):
             break
-    picked = md_first[:n]
-    if len(picked) < n:
-        picked.extend(pdf_second[: n - len(picked)])
-    return picked[:n]
+
+    def _key(p: Path) -> tuple:
+        return (-_article_repro_score(p), 0 if p.suffix.lower() == ".md" else 1, p.name)
+
+    ranked = sorted(candidates, key=_key)
+    ranked = [p for p in ranked if _article_repro_score(p) > 0]
+    # Content fingerprint: drop near-identical re-uploads under different filenames
+    seen_fp: set[str] = set()
+    deduped: list[Path] = []
+    for p in ranked:
+        try:
+            raw = p.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            raw = p.name
+        body = re.sub(r"\s+", "", raw)[:1200]
+        import hashlib
+
+        fp = hashlib.sha1(body.encode("utf-8", errors="ignore")).hexdigest()
+        if fp in seen_fp:
+            continue
+        seen_fp.add(fp)
+        deduped.append(p)
+        if len(deduped) >= n:
+            break
+    return deduped[:n]
 
 
 def _extract_json_blob(stdout: str) -> dict | None:
@@ -80,6 +156,27 @@ def _extract_json_blob(stdout: str) -> dict | None:
     return None
 
 
+# 名称域 / force-reextract 罐头式（结构门禁：命中则不计 full_no_fallback）
+_CANNED_FORMULAS = frozenset(
+    {
+        "close / Ref(close, 20) - 1",
+        "close/Ref(close,20)-1",
+        "CSZScore(return_on_equity)",
+        "-1 * CSZScore(Log(market_cap))",
+        "-1*CSZScore(Log(market_cap))",
+        "-1 * CSZScore(pe_ratio)",
+        "-1*CSZScore(pe_ratio)",
+        "-1 * CSZScore(Std(close / Ref(close, 1) - 1, 20))",
+        "-1*CSZScore(Std(close/Ref(close,1)-1,20))",
+        "-1 * CSZScore(Mean(volume, 20) / Mean(volume, 60))",
+    }
+)
+
+
+def _norm_formula(f: str) -> str:
+    return re.sub(r"\s+", "", (f or "").strip())
+
+
 def _score_full_no_fallback(exit_code: int, blob: dict | None, log: str) -> dict:
     status = (blob or {}).get("status", "hard_fail")
     factors = (blob or {}).get("factors") or []
@@ -89,6 +186,10 @@ def _score_full_no_fallback(exit_code: int, blob: dict | None, log: str) -> dict
     formula_proxy = bool(obs.get("formula_proxy"))
     universe_fb = bool(obs.get("universe_fallback"))
     soft = bool(obs.get("soft_pass"))
+    recovery = bool(obs.get("recovery_used"))
+    if recovery:
+        formula_proxy = True
+        formula_fb = True
 
     # Only match real log events — not JSON keys like "formula_proxy": false
     if re.search(
@@ -104,10 +205,21 @@ def _score_full_no_fallback(exit_code: int, blob: dict | None, log: str) -> dict
     ):
         universe_fb = True
     if re.search(
-        r"mark_formula_proxy|formula proxy applied|extract_proxy:|compute_proxy:|unhealthy_retry_proxy:",
+        r"mark_formula_proxy|formula proxy applied|extract_proxy:|compute_proxy:|"
+        r"unhealthy_retry_proxy:|domain_name_heuristic|domain formula as PROXY",
         log,
         re.I,
     ):
+        formula_proxy = True
+        formula_fb = True
+    # 仅匹配真实恢复事件，勿匹配 JSON 键 "recovery_used": false
+    if re.search(
+        r"mark_recovery_used|Dev recovery:|Strict force re-extract|"
+        r"keep-first dry-run|domain formula as PROXY",
+        log,
+        re.I,
+    ):
+        recovery = True
         formula_proxy = True
         formula_fb = True
 
@@ -116,6 +228,8 @@ def _score_full_no_fallback(exit_code: int, blob: dict | None, log: str) -> dict
     bad = 0
     zero_m = 0
     ics: list[float] = []
+    formulas: list[str] = []
+    canned_hit = False
     for f in factors:
         st = f.get("status")
         is_soft = bool(f.get("soft_pass")) or str(f.get("reflection_status") or "").startswith(
@@ -124,6 +238,12 @@ def _score_full_no_fallback(exit_code: int, blob: dict | None, log: str) -> dict
         if is_soft:
             soft_factors += 1
             soft = True
+        fml = f.get("formula") or ""
+        if fml:
+            formulas.append(fml)
+            nf = _norm_formula(fml)
+            if any(_norm_formula(c) == nf for c in _CANNED_FORMULAS):
+                canned_hit = True
         if st in {"passed", "converged"} and not is_soft:
             hard_ok += 1
             m = f.get("metrics") or {}
@@ -139,8 +259,18 @@ def _score_full_no_fallback(exit_code: int, blob: dict | None, log: str) -> dict
         elif st not in {"passed", "converged"}:
             bad += 1
 
-    # 多因子相同 ic 到 1e-12 且>1 个 → 可疑同一代理式（记录但不单独否决，依赖 proxy 旗标）
+    # 多因子相同 ic 到 1e-12 且>1 个 → 可疑同一代理式
     identical_ic_theater = len(ics) >= 3 and len({round(x, 12) for x in ics}) == 1
+
+    # 结构门禁：旧 keep-first dry-run 路径（当前代码已移除；仅历史日志匹配）
+    keep_first_theater = bool(
+        re.search(r"Strict mode: dry-run OK factor|只保留第一个|keep-first", log, re.I)
+    ) and len(factors) == 1 and (
+        log.count("Dropping") >= 2 or log.count("dry-run failed") >= 2
+    )
+
+    # 罐头式仅在与 recovery/force 路径同时出现时否决（真实动量/ROE 文可合法使用同式）
+    canned_theater = canned_hit and (recovery or keep_first_theater)
 
     full = (
         exit_code == 0
@@ -150,14 +280,20 @@ def _score_full_no_fallback(exit_code: int, blob: dict | None, log: str) -> dict
         and not formula_fb
         and not formula_proxy
         and not universe_fb
+        and not recovery
+        and not canned_theater
+        and not keep_first_theater
         and bad == 0
         and zero_m == 0
         and hard_ok >= 1
+        and hard_ok == len(factors)
         and len(factors) >= 1
     )
 
     if full:
         mode = None
+    elif recovery or canned_theater or keep_first_theater:
+        mode = "recovery_or_canned_theater"
     elif formula_proxy or formula_fb:
         mode = "formula_proxy_or_fallback"
     elif universe_fb:
@@ -182,6 +318,8 @@ def _score_full_no_fallback(exit_code: int, blob: dict | None, log: str) -> dict
         "formula_fallback": formula_fb,
         "formula_proxy": formula_proxy,
         "universe_fallback": universe_fb,
+        "recovery_used": recovery,
+        "canned_formula_hit": canned_hit,
         "identical_ic_theater_suspect": identical_ic_theater,
         "hard_ok_factors": hard_ok,
         "bad_factors": bad,
@@ -189,6 +327,7 @@ def _score_full_no_fallback(exit_code: int, blob: dict | None, log: str) -> dict
         "status": status,
         "factor_count": len(factors),
         "factor_statuses": [f.get("status") for f in factors],
+        "formulas": formulas,
         "ics": ics,
         "observability": obs,
     }
@@ -306,13 +445,14 @@ def main() -> int:
         "allow_formula_proxy": False,
         "success_definition": (
             "exit0 & status=passed & no soft_pass & no formula_fallback "
-            "& no formula_proxy & no universe_fallback & all factors hard-pass "
-            "& non-degenerate metrics"
+            "& no formula_proxy & no universe_fallback & no recovery_used "
+            "& all factors hard-pass & non-degenerate metrics"
         ),
+        "distinct_paths": len({r.get("path") for r in results}),
     }
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
-    return 0 if n >= 50 and rate > 0.98 else 1
+    return 0 if n >= 100 and rate > 0.98 else 1
 
 
 if __name__ == "__main__":

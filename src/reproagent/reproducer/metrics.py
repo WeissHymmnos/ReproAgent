@@ -11,26 +11,37 @@ from reproagent.models.backtest import BacktestResult
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
-    """Coerce polars scalar aggregates to float for typing and safety."""
+    """Coerce polars scalar aggregates to float for typing and safety.
+
+    NaN/Inf → default，避免 ic_mean=nan 把健康复现打成 unhealthy。
+    """
+    import math
+
     if value is None:
         return default
     try:
-        return float(value)
+        v = float(value)
     except (TypeError, ValueError):
         return default
+    if not math.isfinite(v):
+        return default
+    return v
 
 
 def compute_ic(
     factor_values: pl.DataFrame,
     forward_returns: pl.DataFrame,
 ) -> pl.DataFrame:
-    """截面 rank IC（按日期），返回 [date, ic]。"""
+    """截面 rank IC（按日期），返回 [date, ic]（丢弃单日 nan corr）。"""
     df = factor_values.join(forward_returns, on=["date", "asset"], how="inner").drop_nulls()
     ic_df = (
         df.group_by("date")
         .agg(pl.corr("factor_value", "forward_return", method="spearman").alias("ic"))
         .sort("date")
     )
+    # 全日因子常数 / 样本过少时 spearman 为 null/nan，不参与均值
+    if "ic" in ic_df.columns:
+        ic_df = ic_df.filter(pl.col("ic").is_not_null() & pl.col("ic").is_finite())
     return ic_df
 
 

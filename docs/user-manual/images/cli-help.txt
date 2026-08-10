@@ -1,0 +1,20 @@
+                                                                                
+ Usage: reproagent [OPTIONS] COMMAND [ARGS]...                                  
+                                                                                
+ 研报因子复现系统                                                               
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --version             -V        显示版本号                                   │
+│ --install-completion            Install completion for the current shell.    │
+│ --show-completion               Show completion for the current shell, to    │
+│                                 copy it or customize the installation.       │
+│ --help                          Show this message and exit.                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────╮
+│ ingest     摄入一篇研报：upload → validate → 持久化。                        │
+│ reproduce  端到端：摄入 → 解析 → 复现 → 偏差 → 入库。                        │
+│ library    浏览因子库。                                                      │
+│ review     处理人工复核队列：查看 / approve / reject。                       │
+│ tui        启动 TUI。                                                        │
+╰──────────────────────────────────────────────────────────────────────────────╯
+

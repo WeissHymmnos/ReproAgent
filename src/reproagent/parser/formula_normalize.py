@@ -11,7 +11,7 @@ import ast
 import re
 from dataclasses import dataclass
 
-# 同义字段 → 面板真实列（米筐量价 + 基本面 join）
+# 同义字段 → 面板真实列（仅字段同义，禁止 mom/动量 等概念→close 静默顶替）
 _FIELD_ALIASES: dict[str, str] = {
     "total_market_cap": "market_cap",
     "mkt_cap": "market_cap",
@@ -21,9 +21,6 @@ _FIELD_ALIASES: dict[str, str] = {
     "float_mv": "market_cap",
     "turnover": "volume",
     "turnover_rate": "volume",
-    "returns": "close",
-    "ret": "close",
-    "vwap": "close",
     "adj_close": "close",
     "pre_close": "close",
     "pe": "pe_ratio",
@@ -38,17 +35,8 @@ _FIELD_ALIASES: dict[str, str] = {
     "book_value": "book_value",
     "book_value_per_share": "book_value_per_share",
     "bvps": "book_value_per_share",
-    # LLM 常见衍生名 → 真实列
     "droe": "return_on_equity",
     "droa": "return_on_asset",
-    "np_growth": "return_on_equity",
-    "profit_growth": "return_on_equity",
-    "revenue_growth": "operating_revenue",
-    "liquid": "volume",
-    "liquidity": "volume",
-    "mom": "close",
-    "momentum": "close",
-    "reversal": "close",
 }
 
 # 已知股票池（一等公民定义，不是失败后静默代理）
@@ -183,6 +171,54 @@ def _looks_like_prose_or_equation(formula: str) -> bool:
     return False
 
 
+# 单参时序算子：缺窗口时默认 20（避免 Std(x) 退化为全日截面常数 → 因子全零）
+_TS_UNARY_DEFAULT_WINDOW = frozenset(
+    {
+        "Std",
+        "Var",
+        "Skew",
+        "Kurt",
+        "EMA",
+        "WMA",
+        "Delta",
+        "Ts_Rank",
+        "Ts_Max",
+        "Ts_Min",
+        "Ts_Mean",
+        "Ts_Sum",
+        "Ts_Std",
+    }
+)
+
+
+def _inject_default_ts_windows(formula: str, default_n: int = 20) -> str:
+    """Std(x) → Std(x, 20)；已有第二参则不动。机械改写，非 proxy。"""
+    try:
+        tree = ast.parse(formula, mode="eval")
+    except SyntaxError:
+        return formula
+
+    class Injector(ast.NodeTransformer):
+        def visit_Call(self, node: ast.Call) -> ast.AST:
+            self.generic_visit(node)
+            if not isinstance(node.func, ast.Name):
+                return node
+            name = node.func.id
+            # 归一化大小写：std → 仍保留原名，仅处理白名单规范名
+            if name not in _TS_UNARY_DEFAULT_WINDOW:
+                return node
+            if len(node.args) == 1 and not node.keywords:
+                node.args.append(ast.Constant(value=default_n))
+            return node
+
+    new_tree = Injector().visit(tree)
+    ast.fix_missing_locations(new_tree)
+    try:
+        return ast.unparse(new_tree)
+    except Exception:  # noqa: BLE001
+        return formula
+
+
 def mechanical_rewrite(formula: str) -> str:
     """仅语法与同义字段；不替换整式。"""
     s = formula.strip()
@@ -223,6 +259,17 @@ def mechanical_rewrite(formula: str) -> str:
         r"Pow(\1, \2)",
         s,
     )
+    # 窗口占位符 N/W/window → 20（研报常用；机械改写，非 proxy）
+    s = re.sub(r",\s*\bN\b", ", 20", s)
+    s = re.sub(r",\s*\bn\b", ", 20", s)
+    s = re.sub(r",\s*\bW\b", ", 20", s)
+    s = re.sub(r",\s*\bwindow\b", ", 20", s, flags=re.I)
+    s = re.sub(r",\s*\blookback\b", ", 20", s, flags=re.I)
+    s = re.sub(r",\s*\bperiod\b", ", 20", s, flags=re.I)
+    # 收益字段 → 显式日收益（机械，非 close 顶替）
+    s = re.sub(r"\breturns\b", "(close/Ref(close,1)-1)", s, flags=re.I)
+    s = re.sub(r"\bret\b", "(close/Ref(close,1)-1)", s, flags=re.I)
+    s = _inject_default_ts_windows(s)
     return s
 
 
@@ -269,25 +316,34 @@ def proxy_formula_from_name(factor_name: str = "", factor_name_cn: str = "") -> 
     return "close / Ref(close, 20) - 1"
 
 
-def coerce_unknown_names(formula: str, default_col: str = "close") -> str:
-    """将未知叶子标识符替换为 default_col，保留算子结构（字段补全，非整式代理）。"""
+def coerce_unknown_names(
+    formula: str, default_col: str = "close"
+) -> tuple[str, bool]:
+    """将未知叶子替换为 default_col。
+
+    返回 (new_formula, replaced_any)。只要替换过未知字段 → 调用方必须标 used_proxy。
+    """
     try:
         tree = ast.parse(formula, mode="eval")
     except SyntaxError:
-        return formula
+        return formula, False
+
+    replaced = False
 
     class Rewriter(ast.NodeTransformer):
         def visit_Name(self, node: ast.Name) -> ast.AST:
+            nonlocal replaced
             if node.id in _OPS or node.id in _COLS:
                 return node
+            replaced = True
             return ast.copy_location(ast.Name(id=default_col, ctx=ast.Load()), node)
 
     new_tree = Rewriter().visit(tree)
     ast.fix_missing_locations(new_tree)
     try:
-        return ast.unparse(new_tree)
+        return ast.unparse(new_tree), replaced
     except Exception:  # noqa: BLE001
-        return formula
+        return formula, replaced
 
 
 def normalize_formula(
@@ -299,39 +355,37 @@ def normalize_formula(
 ) -> tuple[str, bool, bool]:
     """返回 (formula, used_proxy, mechanical_rewrite).
 
-    allow_proxy=False（严格/评分）：机械改写 + 未知字段→close 补全；不整式代理。
-    allow_proxy=True：仍不可执行时才整式名称启发式代理（used_proxy=True）。
+    used_proxy=True 当且仅当：
+      - 空公式被填成默认式
+      - 叙述/散文被换成名称启发式
+      - 未知字段被 coerce 成 close
+      - 整式名称启发式代理
+
+    仅 Power→Pow、pe→pe_ratio 等同义机械改写 → used_proxy=False。
     """
     raw = (formula or "").strip()
     if not raw:
-        if allow_proxy:
-            return proxy_formula_from_name(factor_name, factor_name_cn), True, False
-        # 严格：空公式用可执行动量（与 prompt 要求一致的默认表达，非 proxy 旗标）
-        return "close / Ref(close, 20) - 1", False, True
+        # 空公式 → 任何填充都是代理
+        return proxy_formula_from_name(factor_name, factor_name_cn), True, False
 
     if _looks_like_prose_or_equation(raw):
-        # 叙述式：尝试从名称生成可执行式；严格模式下也不标 proxy，
-        # 但用字段真实表达式（pe/roe/market_cap）而非一律 close 动量
-        generated = proxy_formula_from_name(factor_name, factor_name_cn)
-        # 若能从名称得到非默认动量，视为结构化生成；默认动量对 prose 算 proxy
-        is_default = generated.strip() == "close / Ref(close, 20) - 1"
-        if allow_proxy or not is_default:
-            return generated, is_default and allow_proxy, False
-        return generated, True, False  # prose→default 动量：必须标 proxy
+        # 叙述式 → 名称启发式一律算 proxy（含 ROE/PE/size 专用式）
+        return proxy_formula_from_name(factor_name, factor_name_cn), True, False
 
     cleaned = mechanical_rewrite(raw)
     mechanical = cleaned != raw
     if is_executable(cleaned):
         return cleaned, False, mechanical
 
-    # 未知字段补全为 close，保留算子树
-    coerced = coerce_unknown_names(cleaned)
-    if is_executable(coerced):
-        return coerced, False, True
+    # 未知字段→close：静默 close 替换 = proxy
+    coerced, replaced = coerce_unknown_names(cleaned)
+    if replaced and is_executable(coerced):
+        return coerced, True, mechanical
 
-    if allow_proxy:
-        return proxy_formula_from_name(factor_name, factor_name_cn), True, mechanical
-    # 严格：仍返回可执行默认，但标记 proxy
+    if is_executable(coerced) and not replaced:
+        return coerced, False, mechanical
+
+    # 仍不可执行 → 整式名称代理
     return proxy_formula_from_name(factor_name, factor_name_cn), True, mechanical
 
 

@@ -97,18 +97,16 @@ class LLMExtractor:
                         logger.warning("Chunk %d extraction failed: %s", i, exc)
                 merged = merge_factor_specs(all_specs)
                 if not merged:
-                    # 二次尝试：截断正文 + 强制至少 1 个可执行因子
+                    # 二次尝试：截断正文（严格模式仍禁止罐头公式注入）
                     short = markdown[:6000]
                     try:
                         merged = self._extract_once(report, short, chunk_index=None)
                     except LLMError:
                         merged = []
-                if not merged:
-                    raise LLMError("All chunk extractions returned empty factors")
-                return merged
+                return merged  # 可空 → pipeline no_factors
             specs = self._extract_once(report, markdown, chunk_index=None)
-            if not specs:
-                # 二次提取
+            # 开发模式才允许二次“塞示例公式”重提；严格评分路径禁止罐头注入
+            if not specs and self.settings.formula_fallback_allowed:
                 specs = self._extract_once(
                     report,
                     markdown[:6000]
@@ -130,6 +128,7 @@ class LLMExtractor:
         markdown: str,
         *,
         chunk_index: int | None,
+        skip_strict_recovery: bool = False,
     ) -> list[ParsedFactorSpec]:
         try:
             import instructor
@@ -206,35 +205,250 @@ class LLMExtractor:
             )
 
         if not envelope.factors:
-            if chunk_index is not None:
-                return []
-            raise LLMError("LLM returned empty factors list")
+            # 诚实：空提取 → []，由 pipeline 报 no_factors（不 raise 成 hard_fail）
+            logger.warning("LLM returned empty factors list (chunk=%s)", chunk_index)
+            return []
 
         from reproagent.parser.formula_normalize import is_executable
+        from reproagent.reproducer.run_flags import mark_recovery_used
 
+        # Stage A: LLM + 机械规范化 only。严格路径返回全部可执行非代理因子（可多因子）。
         out: list[ParsedFactorSpec] = []
+        dropped_proxy: list[ParsedFactorSpec] = []
         for f in envelope.factors:
             if not f.id:
                 f = f.model_copy(update={"id": uuid.uuid4().hex})
             f = self._sanitize_extracted_spec(f)
             if getattr(f, "_strict_drop", False):
-                logger.warning("Dropping proxy formula factor %s (strict)", f.factor_name)
+                logger.warning(
+                    "Dropping non-honest factor %s (proxy/universe_fallback/strict)",
+                    f.factor_name,
+                )
+                dropped_proxy.append(f)
                 continue
             if not is_executable(f.formula or ""):
                 logger.warning(
-                    "Non-executable after sanitize: %s %r",
+                    "Dropping non-executable factor %s %r",
                     f.factor_name,
                     (f.formula or "")[:60],
                 )
+                continue
             out.append(f)
+
+        # 严格模式：保留**所有** dry-run 健康因子（可多因子；≠ keep-first 只留 1 个）
+        if not self.settings.formula_fallback_allowed and out and not skip_strict_recovery:
+            healthy: list[ParsedFactorSpec] = []
+            for cand in out:
+                if self._dry_run_factor_ok(cand):
+                    healthy.append(cand)
+                    logger.info(
+                        "Strict mode: dry-run OK keep %s formula=%r",
+                        cand.factor_name,
+                        (cand.formula or "")[:60],
+                    )
+                else:
+                    logger.warning(
+                        "Strict mode: dry-run drop %s formula=%r",
+                        cand.factor_name,
+                        (cand.formula or "")[:60],
+                    )
+            out = healthy
+
+        # 严格模式：全部被丢弃时，再问一次 LLM（仅白名单约束，**无** ROE/动量罐头配方）
+        if (
+            not out
+            and not self.settings.formula_fallback_allowed
+            and not skip_strict_recovery
+            and chunk_index is None
+            and markdown
+        ):
+            out = self._strict_whitelist_reask(report, markdown)
+            # re-ask 结果同样做 multi dry-run 过滤
+            if out:
+                healthy2 = [c for c in out if self._dry_run_factor_ok(c)]
+                out = healthy2
+
+        # Stage B: 名称域恢复级联仅在 formula_fallback_allowed（开发）时启用
+        if (
+            self.settings.formula_fallback_allowed
+            and not skip_strict_recovery
+            and not out
+            and (envelope.factors or dropped_proxy)
+        ):
+            mark_recovery_used("dev_domain_proxy")
+            base = (dropped_proxy or list(envelope.factors) or [None])[0]
+            if base is not None:
+                if not base.id:
+                    base = base.model_copy(update={"id": uuid.uuid4().hex})
+                out = self._domain_formula_as_proxy(base)
         return out
 
+    def _strict_whitelist_reask(
+        self,
+        report: ResearchReport,
+        markdown: str,
+    ) -> list[ParsedFactorSpec]:
+        """严格二次提问：不注入罐头公式，只强调白名单与可多因子。"""
+        force_md = (
+            markdown[:7000]
+            + "\n\n[重提约束] 上一轮因子无法用引擎字段执行。"
+            "请重新提取：**可输出多个**因子；每个 formula 只能使用 "
+            "Rank/CSZScore/Ref/Mean/Std/Sum/Delta/EMA/Abs/Log/Sign/Sqrt/Pow/Max/Min "
+            "与 open/high/low/close/volume/amount/market_cap/pe_ratio/pb_ratio/return_on_equity。"
+            "时序算子必须带整数窗口（如 Std(x,20)）。"
+            "无法用上述字段表达的因子请**省略**（不要用未知变量，不要用概念名顶替）。"
+            "universe 仅 csi300/csi500/csi1000/全A股。"
+        )
+        try:
+            return self._extract_once(
+                report, force_md, chunk_index=None, skip_strict_recovery=True
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Strict whitelist re-ask failed: %s", exc)
+            return []
+
+    def _domain_formula_as_proxy(self, base: ParsedFactorSpec) -> list[ParsedFactorSpec]:
+        """名称域公式 = 整式启发式代理，必须 mark formula_proxy（仅 dev recovery）。"""
+        from reproagent.reproducer.run_flags import mark_formula_proxy
+
+        for fml in self._domain_formulas(base.factor_name or "", base.factor_name_cn or ""):
+            cand = base.model_copy(
+                update={
+                    "formula": fml,
+                    "universe": "csi300",
+                    "reported_metrics": ReportedMetrics(),
+                    "extraction_confidence": min(
+                        float(base.extraction_confidence or 0.5), 0.45
+                    ),
+                }
+            )
+            if self._dry_run_factor_ok(cand):
+                mark_formula_proxy(base.factor_name or "", "domain_name_heuristic")
+                logger.info(
+                    "Dev recovery: domain formula as PROXY %s %r",
+                    base.factor_name,
+                    fml,
+                )
+                return [cand]
+        return []
+
+    def _domain_formulas(self, factor_name: str, factor_name_cn: str) -> list[str]:
+        """按名称给出候选真实字段公式（均 is_executable；调用方须标 proxy）。"""
+        blob = f"{factor_name} {factor_name_cn}".lower()
+        cands: list[str] = []
+        if any(k in blob for k in ("vol", "波动", "std", "方差", "idiosyncrat")):
+            cands.append("-1 * CSZScore(Std(close / Ref(close, 1) - 1, 20))")
+        if any(k in blob for k in ("size", "市值", "mkt", "cap", "equal", "weight", "risk")):
+            cands.append("-1 * CSZScore(Log(market_cap))")
+        if any(k in blob for k in ("roe", "盈利", "profit", "quality", "质量")):
+            cands.append("CSZScore(return_on_equity)")
+        if any(k in blob for k in ("pe", "pb", "value", "估值", "ep")):
+            cands.append("-1 * CSZScore(pe_ratio)")
+        if any(k in blob for k in ("turn", "换手", "volume", "成交", "liquid")):
+            cands.append("-1 * CSZScore(Mean(volume, 20) / Mean(volume, 60))")
+        if any(k in blob for k in ("mom", "动量", "reversal", "反转")):
+            cands.append("close / Ref(close, 20) - 1")
+        cands.append("close / Ref(close, 20) - 1")
+        seen: set[str] = set()
+        out: list[str] = []
+        for c in cands:
+            if c not in seen:
+                seen.add(c)
+                out.append(c)
+        return out
+
+    def _dry_run_factor_ok(self, spec: ParsedFactorSpec) -> bool:
+        """短窗回测：公式可算且结果健康（无代理）。"""
+        from reproagent.reproducer.run_flags import get_run_flags, restore_run_flags
+
+        flags_before = {
+            "formula_fallback": bool(get_run_flags().get("formula_fallback", False)),
+            "formula_proxy": bool(get_run_flags().get("formula_proxy", False)),
+            "universe_fallback": bool(get_run_flags().get("universe_fallback", False)),
+            "universe_fallback_reason": get_run_flags().get("universe_fallback_reason"),
+            "soft_pass": bool(get_run_flags().get("soft_pass", False)),
+            "proxy_factors": list(get_run_flags().get("proxy_factors") or []),
+        }
+        try:
+            from datetime import UTC, date, datetime
+
+            from reproagent.models.replication import BacktestParams, ReplicationConfig
+            from reproagent.reproducer.data_loader import DataLoader
+            from reproagent.reproducer.health import is_healthy_reproduction
+            from reproagent.reproducer.reproducer import FactorReproducer
+
+            # 与默认 full 回测窗口一致，避免 short-window dry-run 通过、full 再 fail → partial
+            cfg = ReplicationConfig(
+                id="dry",
+                report_id="dry",
+                factor_specs=[spec],
+                engine="polars",
+                data_source=self.settings.data_source,
+                backtest_params=BacktestParams(
+                    start_date=date(2018, 1, 1),
+                    end_date=date(2024, 12, 31),
+                ),
+                parser_version=self.settings.parser_version,
+                extraction_model_id=self.settings.llm_model,
+                created_at=datetime.now(UTC),
+            )
+            loader = DataLoader(self.settings)
+            rep = FactorReproducer(self.settings, loader)
+            result = rep.reproduce(cfg)
+            ok = bool(is_healthy_reproduction(result))
+            # 若 dry-run 自身引入了 proxy，该候选不算 OK
+            if get_run_flags().get("formula_proxy") and not flags_before.get("formula_proxy"):
+                ok = False
+            return ok
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc).lower()
+            # universe 解析失败 → 不放行（避免 dry-run 放行后 full 因 csi1000 配额再炸）
+            if any(
+                k in msg
+                for k in (
+                    "cannot resolve",
+                    "unrecognized ricequant universe",
+                    "empty index components",
+                )
+            ):
+                logger.warning("dry-run universe fail for %s: %s", spec.factor_name, exc)
+                return False
+            # 纯量价拉取配额/瞬时网络：公式可执行则放行（磁盘面板可兜底）
+            infra = any(
+                k in msg
+                for k in (
+                    "quota",
+                    "rate limit",
+                    "too many requests",
+                    "timeout",
+                    "temporarily",
+                    "connection",
+                )
+            )
+            if infra:
+                from reproagent.parser.formula_normalize import is_executable
+
+                if is_executable((spec.formula or "").strip()):
+                    logger.warning(
+                        "dry-run data-infra fail for %s, accepting executable formula: %s",
+                        spec.factor_name,
+                        exc,
+                    )
+                    return True
+            logger.warning("dry-run failed for %s: %s", spec.factor_name, exc)
+            return False
+        finally:
+            # 无论成败，dry-run 不得污染主流程 observability
+            restore_run_flags(flags_before)
+
     def _sanitize_extracted_spec(self, spec: ParsedFactorSpec) -> ParsedFactorSpec:
-        """清洗 LLM 输出：机械规范化；代理/未知池打标。"""
+        """清洗 LLM 输出：机械规范化；代理/未知池必须打标。
+
+        严格模式：used_proxy 或 universe_fallback → _strict_drop（不静默 CSI300 冒充成功）。
+        """
         from reproagent.parser.formula_normalize import normalize_all
         from reproagent.reproducer.run_flags import mark_formula_proxy, mark_universe_fallback
 
-        # 严格评分：禁止整式代理；仅机械改写 + 真实字段同义
         allow_proxy = bool(self.settings.formula_fallback_allowed)
         nr = normalize_all(
             formula=spec.formula,
@@ -247,11 +461,18 @@ class LLMExtractor:
             "formula": nr.formula,
             "universe": nr.universe,
         }
+        # 未知池：开发模式 remap+打标；严格模式丢弃该因子（不静默 CSI300，也不污染兄弟因子）
+        if nr.universe_fallback:
+            if allow_proxy:
+                mark_universe_fallback(f"extract:{spec.universe!r}->{nr.universe}")
+                updates["universe"] = nr.universe
+            # else: 保持 nr.universe 但 _strict_drop，见下
+
         if nr.used_proxy and allow_proxy:
             mark_formula_proxy(spec.factor_name or "", "extract_proxy")
-            updates["extraction_confidence"] = min(float(spec.extraction_confidence or 0.5), 0.45)
-        if nr.universe_fallback:
-            mark_universe_fallback(f"extract:{spec.universe!r}->{nr.universe}")
+            updates["extraction_confidence"] = min(
+                float(spec.extraction_confidence or 0.5), 0.45
+            )
 
         if not self.settings.formula_fallback_allowed:
             updates["reported_metrics"] = ReportedMetrics()
@@ -270,8 +491,11 @@ class LLMExtractor:
                     updates["reported_metrics"] = ReportedMetrics()
 
         updated = spec.model_copy(update=updates)
-        # 附带是否应丢弃（严格 + 整式代理）
-        object.__setattr__(updated, "_strict_drop", bool(nr.used_proxy and not allow_proxy))
+        # 严格：代理式或未知池 → 丢弃（禁止 remap 后无旗标 passed）
+        strict_drop = bool(
+            not allow_proxy and (nr.used_proxy or nr.universe_fallback)
+        )
+        object.__setattr__(updated, "_strict_drop", strict_drop)
         return updated
 
     def revise(
