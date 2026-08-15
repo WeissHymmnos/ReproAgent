@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import date
 from pathlib import Path
@@ -48,9 +49,36 @@ _NAMED_UNIVERSE_INDEX: dict[str, str] = {
 # 进程内缓存：避免同一进程内重复拉同一指数面板
 _RQ_PRICE_CACHE: dict[tuple[str, str, str], pl.DataFrame] = {}
 _RQ_INITED = False
-# 磁盘缓存目录（跨 CLI 子进程复用）
-_RQ_DISK_CACHE_DIR = Path.home() / ".reproagent" / "cache" / "ricequant_prices"
-_RQ_INST_CACHE_DIR = Path.home() / ".reproagent" / "cache" / "ricequant_instruments"
+# 磁盘缓存目录（跨 CLI 子进程复用；FINAINCE_HOME 优先）
+def _rq_cache_roots() -> tuple[Path, Path]:
+    """Resolve RiceQuant disk cache dirs at call time so FINAINCE_HOME wins."""
+    home = Path.home() / ".reproagent" / "cache"
+    raw = (os.environ.get("FINAINCE_HOME") or "").strip()
+    if raw:
+        home = Path(raw).expanduser() / "reproagent" / "cache"
+    return home / "ricequant_prices", home / "ricequant_instruments"
+
+
+def _pandas_to_polars(df: Any) -> pl.DataFrame:
+    """Convert a RiceQuant pandas frame without requiring pyarrow.
+
+    rqdatac often emits pandas nullable dtypes (Int64/Float64). Polars'
+    ``from_pandas`` then asks for pyarrow. Coerce those columns first.
+    """
+    try:
+        return _pandas_to_polars(df)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("pl.from_pandas failed (%s); coercing nullable dtypes", exc)
+    coerced = df.copy()
+    for col in list(coerced.columns):
+        dtype = str(coerced[col].dtype)
+        if dtype in {"Int64", "Int32", "UInt64", "UInt32", "Float64", "Float32"}:
+            coerced[col] = coerced[col].astype("float64")
+        elif dtype in {"boolean", "Boolean"}:
+            coerced[col] = coerced[col].astype("object")
+        elif dtype in {"string", "String"}:
+            coerced[col] = coerced[col].astype("object")
+    return _pandas_to_polars(coerced)
 
 
 def is_cb_universe(universe: str | list[str]) -> bool:
@@ -184,10 +212,11 @@ class DataLoader:
             # 磁盘缓存成分，避免 50 次 CLI 子进程打爆 rq 配额
             import json as _json
 
-            _RQ_INST_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            _price_dir, inst_dir = _rq_cache_roots()
+            inst_dir.mkdir(parents=True, exist_ok=True)
             # 按月粒度缓存（as_of 年月）
             stamp = f"{as_of.year:04d}{as_of.month:02d}"
-            inst_path = _RQ_INST_CACHE_DIR / f"{index_id.replace('.', '_')}_{stamp}.json"
+            inst_path = inst_dir / f"{index_id.replace('.', '_')}_{stamp}.json"
             if inst_path.exists():
                 try:
                     cached = _json.loads(inst_path.read_text(encoding="utf-8"))
@@ -209,7 +238,7 @@ class DataLoader:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("index_components(%s) failed: %s; trying latest", index_id, exc)
                 # 任意历史缓存兜底
-                for p in sorted(_RQ_INST_CACHE_DIR.glob(f"{index_id.replace('.', '_')}*.json")):
+                for p in sorted(inst_dir.glob(f"{index_id.replace('.', '_')}*.json")):
                     try:
                         cached = _json.loads(p.read_text(encoding="utf-8"))
                         if isinstance(cached, list) and cached:
@@ -424,7 +453,8 @@ class DataLoader:
             import hashlib
 
             digest = hashlib.sha256(inst_key.encode()).hexdigest()[:24]
-            disk_path = _RQ_DISK_CACHE_DIR / f"{digest}.parquet"
+            price_dir, _inst_dir = _rq_cache_roots()
+            disk_path = price_dir / f"{digest}.parquet"
             if disk_path.exists():
                 try:
                     pldf = pl.read_parquet(disk_path)
@@ -480,7 +510,7 @@ class DataLoader:
 
             df = df.rename(columns=col_map)
 
-            pldf = pl.from_pandas(df)
+            pldf = _pandas_to_polars(df)
             if "trade_date" in pldf.columns and pldf.schema["trade_date"] == pl.Datetime:
                 pldf = pldf.with_columns(pl.col("trade_date").dt.date())
             # 保证 amount 列存在
@@ -492,7 +522,7 @@ class DataLoader:
 
             _RQ_PRICE_CACHE[cache_key] = pldf
             try:
-                _RQ_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                price_dir.mkdir(parents=True, exist_ok=True)
                 pldf.write_parquet(disk_path)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("ricequant disk cache write failed: %s", exc)
@@ -522,7 +552,7 @@ class DataLoader:
         """配额耗尽时选用磁盘上行数最多的量价面板并按日期切片。"""
         try:
             paths = sorted(
-                _RQ_DISK_CACHE_DIR.glob("*.parquet"),
+                _rq_cache_roots()[0].glob("*.parquet"),
                 key=lambda p: p.stat().st_size,
                 reverse=True,
             )
@@ -586,7 +616,7 @@ class DataLoader:
                     col_map["order_book_id"] = "ts_code"
                 if col_map:
                     fdf = fdf.rename(columns=col_map)
-                mpdf = pl.from_pandas(fdf)
+                mpdf = _pandas_to_polars(fdf)
                 if "trade_date" in mpdf.columns and mpdf.schema["trade_date"] == pl.Datetime:
                     mpdf = mpdf.with_columns(pl.col("trade_date").dt.date())
                 if rq_name not in mpdf.columns:
@@ -670,7 +700,7 @@ class DataLoader:
         }
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
 
-        pldf = pl.from_pandas(df)
+        pldf = _pandas_to_polars(df)
         if "trade_date" in pldf.columns and pldf.schema["trade_date"] == pl.Datetime:
             pldf = pldf.with_columns(pl.col("trade_date").dt.date())
 
@@ -741,7 +771,7 @@ class DataLoader:
             )
         combined = pd.concat(dfs, ignore_index=True)
 
-        pldf = pl.from_pandas(combined)
+        pldf = _pandas_to_polars(combined)
 
         if "trade_date" in pldf.columns:
             pldf = pldf.with_columns(pl.col("trade_date").str.strptime(pl.Date, "%Y%m%d"))
@@ -933,7 +963,7 @@ class DataLoader:
                         if len(sdf.columns) == 3
                         else sdf.columns.tolist()
                     )
-                    frames.append(pl.from_pandas(sdf))
+                    frames.append(_pandas_to_polars(sdf))
             except Exception:
                 continue
 
@@ -994,7 +1024,7 @@ class DataLoader:
                     fields=f"ts_code,trade_date,{','.join(daily_fields)}",
                 )
                 if df is not None and not df.empty:
-                    pldf = pl.from_pandas(df)
+                    pldf = _pandas_to_polars(df)
                     pldf = pldf.with_columns(pl.col("trade_date").str.strptime(pl.Date, "%Y%m%d"))
                     # 反向映射回规范名
                     rev_map = {v: k for k, v in ts_daily_map.items() if v in pldf.columns}
@@ -1030,7 +1060,7 @@ class DataLoader:
                     fields=f"ts_code,end_date,{','.join(fina_fields)}",
                 )
                 if df is not None and not df.empty:
-                    pldf = pl.from_pandas(df)
+                    pldf = _pandas_to_polars(df)
                     if "end_date" in pldf.columns:
                         pldf = pldf.with_columns(
                             pl.col("end_date").str.strptime(pl.Date, "%Y%m%d").alias("trade_date")
@@ -1091,7 +1121,7 @@ class DataLoader:
                     **{f"${f}": f for f in fields},
                 }
             )
-            return pl.from_pandas(df)
+            return _pandas_to_polars(df)
         except ImportError:
             raise ConfigurationError("qlib is not installed.")
         except Exception:

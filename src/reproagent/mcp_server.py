@@ -7,6 +7,181 @@
 from __future__ import annotations
 
 
+def _score_from_metrics(
+    *,
+    ic_mean: float,
+    sharpe: float,
+    dsr: float | None,
+    pbo: float | None,
+    max_drawdown: float,
+) -> dict:
+    """Map core metrics onto a 0–100 score and A/B/C/D grade."""
+    score = 50.0
+    score += max(-20.0, min(20.0, ic_mean * 200.0))
+    score += max(-15.0, min(20.0, sharpe * 10.0))
+    score -= max(0.0, min(15.0, abs(max_drawdown) * 30.0))
+    if dsr is not None:
+        score += max(-10.0, min(15.0, (dsr - 0.5) * 20.0))
+    if pbo is not None:
+        score -= max(0.0, min(20.0, pbo * 25.0))
+    score = max(0.0, min(100.0, score))
+    if score >= 80:
+        grade = "A"
+    elif score >= 65:
+        grade = "B"
+    elif score >= 50:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"score": round(score, 1), "grade": grade}
+
+
+def _run_library_backtest(expression: str) -> dict:
+    """Run the shipped backtester without FastMCP."""
+    from datetime import UTC, date, datetime
+
+    from reproagent.models.factor_def import FactorDefinition
+    from reproagent.models.replication import BacktestParams, ReplicationConfig
+    from reproagent.reproducer.backtester import StrategyBacktester
+    from reproagent.reproducer.data_loader import DataLoader
+    from reproagent.reproducer.polars_engine import PolarsEngine
+    from reproagent.settings import get_settings
+
+    settings = get_settings()
+    loader = DataLoader(settings)
+    start = date.fromisoformat("2023-01-02")
+    end = date.fromisoformat("2023-02-10")
+    fdef = FactorDefinition(
+        id="library-grade",
+        spec_id="library-grade",
+        name="library_grade",
+        name_cn="库评分",
+        style="other",
+        formula=expression,
+        input_fields=[],
+        universe="local_panel",
+        rebalance_frequency="daily",
+    )
+    data = loader.load_price_data("local_panel", start, end)
+    cfg = ReplicationConfig(
+        id="library-grade",
+        report_id="library-grade",
+        factor_specs=[],
+        engine="polars",
+        data_source=settings.data_source,  # type: ignore[arg-type]
+        backtest_params=BacktestParams(start_date=start, end_date=end, transaction_cost_bps=0.0),
+        parser_version=settings.parser_version,
+        extraction_model_id="library-grade",
+        created_at=datetime.now(UTC),
+    )
+    engine = PolarsEngine(cfg, allow_formula_fallback=False)
+    fv = engine.compute(fdef, "local_panel", start, end, data=data)
+    bt = StrategyBacktester(settings).run(
+        factor_values=fv,
+        params=BacktestParams(
+            start_date=start,
+            end_date=end,
+            num_groups=5,
+            transaction_cost_bps=0.0,
+        ),
+        factor_def=fdef,
+        data=data,
+    )
+    return {
+        "backtest_id": bt.id,
+        "rows": len(fv),
+        "ic_mean": bt.ic_mean,
+        "sharpe_ratio": bt.sharpe_ratio,
+        "max_drawdown": bt.max_drawdown,
+        "equity_curve_path": str(bt.equity_curve_path),
+    }
+
+
+def _anti_from_equity(equity_path: str | None) -> dict:
+    empty = {"dsr": None, "pbo": None}
+    if not equity_path:
+        return empty
+    from pathlib import Path
+
+    path = Path(equity_path)
+    if not path.exists():
+        return empty
+    try:
+        import polars as pl
+
+        from reproagent.reproducer.anti_overfitting import (
+            deflated_sharpe_ratio,
+            prob_backtest_overfitting,
+        )
+
+        eq = pl.read_parquet(path)
+        col = "long_short" if "long_short" in eq.columns else None
+        if col is None:
+            for name in eq.columns:
+                if "return" in name.lower() or "ls" in name.lower():
+                    col = name
+                    break
+        if col is None:
+            return empty
+        rets = [float(v) for v in eq[col].drop_nulls().to_list() if v is not None]
+        if len(rets) < 5:
+            return empty
+        return {
+            "dsr": float(deflated_sharpe_ratio(rets)),
+            "pbo": float(prob_backtest_overfitting(rets)),
+        }
+    except Exception:  # noqa: BLE001
+        return empty
+
+
+def library_grade_impl(expression: str | None, backtest_id: str | None = None) -> dict:
+    """Module-level 0-100 grade used by FastMCP and finaince.tools (no FastMCP import)."""
+    if not expression and not backtest_id:
+        return {
+            "score": 0,
+            "grade": "D",
+            "error": "Provide expression and/or backtest_id",
+            "scorer": "library_grade",
+        }
+    if not expression:
+        return {
+            "score": 0,
+            "grade": "C",
+            "note": "backtest_id-only lookup is limited; pass expression for full score",
+            "backtest_id": backtest_id,
+            "scorer": "library_grade",
+        }
+    try:
+        bt = _run_library_backtest(expression)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "score": 0,
+            "grade": "D",
+            "error": str(exc),
+            "scorer": "library_grade",
+        }
+    anti = _anti_from_equity(bt.get("equity_curve_path"))
+    metrics = _score_from_metrics(
+        ic_mean=float(bt.get("ic_mean") or 0.0),
+        sharpe=float(bt.get("sharpe_ratio") or 0.0),
+        dsr=anti.get("dsr"),
+        pbo=anti.get("pbo"),
+        max_drawdown=float(bt.get("max_drawdown") or 0.0),
+    )
+    return {
+        **metrics,
+        "backtest_id": bt.get("backtest_id"),
+        "components": {
+            "ic_mean": bt.get("ic_mean"),
+            "sharpe_ratio": bt.get("sharpe_ratio"),
+            "max_drawdown": bt.get("max_drawdown"),
+            "dsr": anti.get("dsr"),
+            "pbo": anti.get("pbo"),
+        },
+        "scorer": "library_grade",
+    }
+
+
 def build_mcp_server() -> object:
     """构建并返回 MCP 服务器实例（FastMCP）。
 
