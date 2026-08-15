@@ -24,6 +24,7 @@ def build_backtest_bundle(
     end_date: str = "2023-02-10",
     universe: str = "csi300",
     num_groups: int = 5,
+    transaction_cost_bps: float | None = None,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Run the real local/polars backtest path and return numeric metrics."""
@@ -31,6 +32,13 @@ def build_backtest_bundle(
     loader = DataLoader(cfg)
     start = date.fromisoformat(start_date)
     end = date.fromisoformat(end_date)
+    cost = 3.0 if transaction_cost_bps is None else float(transaction_cost_bps)
+    params = BacktestParams(
+        start_date=start,
+        end_date=end,
+        num_groups=num_groups,
+        transaction_cost_bps=cost,
+    )
     fdef = FactorDefinition(
         id="eval-backtest",
         spec_id="eval",
@@ -49,7 +57,7 @@ def build_backtest_bundle(
         factor_specs=[],
         engine="polars",
         data_source=cfg.data_source,  # type: ignore[arg-type]
-        backtest_params=BacktestParams(start_date=start, end_date=end),
+        backtest_params=params,
         parser_version=cfg.parser_version,
         extraction_model_id="eval",
         created_at=datetime.now(UTC),
@@ -58,7 +66,7 @@ def build_backtest_bundle(
     fv = engine.compute(fdef, universe, start, end, data=data)
     bt = StrategyBacktester(cfg).run(
         factor_values=fv,
-        params=BacktestParams(start_date=start, end_date=end, num_groups=num_groups),
+        params=params,
         factor_def=fdef,
         data=data,
     )
@@ -72,4 +80,5 @@ def build_backtest_bundle(
         "long_short_annual_return": bt.long_short_annual_return,
         "factor_values_path": str(bt.factor_values_path),
         "equity_curve_path": str(bt.equity_curve_path),
+        "transaction_cost_bps": float(params.transaction_cost_bps),
     }
