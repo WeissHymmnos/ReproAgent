@@ -47,9 +47,10 @@ class StrategyBacktester:
             data = data.rename({"asset": "ts_code"})
 
         data = data.sort(["ts_code", "trade_date"]).with_columns(
-            (pl.col("close").shift(-1).over("ts_code") / pl.col("close") - 1).alias(
-                "forward_return"
-            )
+            pl.when(pl.col("close").abs() > 1e-12)
+            .then(pl.col("close").shift(-1).over("ts_code") / pl.col("close") - 1)
+            .otherwise(None)
+            .alias("forward_return")
         )
 
         forward_returns = data.select(
@@ -118,30 +119,35 @@ class StrategyBacktester:
         )
 
         # 2. 计算调仓引发的权重变化 (w_t - w_{t-1})
-        # 为每个 date 找到前一个 trade_date
-        dates_df = (
-            weights.select("date")
-            .unique()
-            .sort("date")
-            .with_columns(pl.col("date").shift(1).alias("prev_date"))
-        )
-        w_t = weights
-        w_t_prev = weights.join(dates_df, left_on="date", right_on="prev_date").select(
-            [
-                pl.col("date_right").alias("date"),  # this is the current date
-                "asset",
-                pl.col("weight").alias("prev_weight"),
-            ]
-        )
-
-        merged_w = w_t.join(w_t_prev, on=["date", "asset"], how="full", coalesce=True).fill_null(
-            0.0
-        )
-        daily_turnover = (
-            merged_w.group_by("date")
-            .agg((pl.col("weight") - pl.col("prev_weight")).abs().sum().alias("turnover"))
-            .with_columns((pl.col("turnover") / 2.0).alias("turnover"))
-        )  # 单边换手率
+        if weights.is_empty() or ls_ret.is_empty():
+            date_dtype = weights.schema.get("date", pl.Date) if not weights.is_empty() else pl.Date
+            daily_turnover = pl.DataFrame(
+                {"date": [], "turnover": []},
+                schema={"date": date_dtype, "turnover": pl.Float64},
+            )
+        else:
+            dates_df = (
+                weights.select("date")
+                .unique()
+                .sort("date")
+                .with_columns(pl.col("date").shift(1).alias("prev_date"))
+            )
+            w_t = weights
+            w_t_prev = weights.join(dates_df, left_on="date", right_on="prev_date").select(
+                [
+                    pl.col("date_right").alias("date"),
+                    "asset",
+                    pl.col("weight").alias("prev_weight"),
+                ]
+            )
+            merged_w = w_t.join(w_t_prev, on=["date", "asset"], how="full", coalesce=True).fill_null(
+                0.0
+            )
+            daily_turnover = (
+                merged_w.group_by("date")
+                .agg((pl.col("weight") - pl.col("prev_weight")).abs().sum().alias("turnover"))
+                .with_columns((pl.col("turnover") / 2.0).alias("turnover"))
+            )
 
         avg_turnover = _as_float(daily_turnover["turnover"].mean())
 
