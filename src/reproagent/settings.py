@@ -31,7 +31,9 @@ class Settings(BaseSettings):
     # Parser
     parser_backend: Literal["finpdfpro", "marker", "llamaparse", "mineru"] = "finpdfpro"
     parser_version: str = "1.0.0"
-    finpdfpro_mode: Literal["fast", "balanced", "max-quality"] = "balanced"
+    finpdfpro_mode: Literal["fast", "balanced", "max-quality"] = "fast"
+    finpdfpro_profile: Literal["lite", "balanced", "quality"] = "lite"
+    finpdfpro_formula_backend: Literal["none", "l0", "l1", "pix2text", "smolvlm", "auto"] = "l0"
     finpdfpro_vlm_backend: Literal[
         "none", "paddle_vl", "smolvlm", "edge", "hybrid", "llamacpp_http"
     ] = "none"

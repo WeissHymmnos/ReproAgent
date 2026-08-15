@@ -11,6 +11,35 @@ from typing import Any
 from reproagent.settings import Settings
 
 
+def _notify_catalog_library(entry: Any, backtest: Any) -> None:
+    import os
+
+    if os.environ.get("FINAINCE_CATALOG", "1") == "0":
+        return
+    try:
+        from finaince.catalog.hooks import accept_library_entry
+        from reproagent.reproducer.metrics import serialize_equity_returns
+        from reproagent.reproducer.run_flags import snapshot_run_flags
+    except ImportError:
+        return
+    extras = {
+        "metrics": {
+            "ic_mean": getattr(backtest, "ic_mean", None),
+            "ic_ir": getattr(backtest, "ic_ir", None),
+            "sharpe_ratio": getattr(backtest, "sharpe_ratio", None),
+            "max_drawdown": getattr(backtest, "max_drawdown", None),
+            "long_short_annual_return": getattr(backtest, "long_short_annual_return", None),
+        },
+        "daily_returns": serialize_equity_returns(getattr(backtest, "equity_curve_path", None)),
+        "factor_values_uri": str(getattr(backtest, "factor_values_path", "") or "") or None,
+        "observability": snapshot_run_flags(),
+    }
+    try:
+        accept_library_entry(entry, extras=extras)
+    except Exception:  # noqa: BLE001
+        return
+
+
 def _single_factor_config(config: Any, spec: Any) -> Any:
     """从多因子 config 切出仅含一个 spec 的副本。"""
     return config.model_copy(update={"factor_specs": [spec]}, deep=True)
@@ -176,6 +205,7 @@ def _process_one_factor(
             created_at=datetime.now(UTC),
         )
         saved = library_manager.register(entry)
+        _notify_catalog_library(saved, result)
         if experience_memory is not None:
             try:
                 experience_memory.record_success(
@@ -234,6 +264,7 @@ def _process_one_factor(
                 created_at=datetime.now(UTC),
             )
             saved = library_manager.register(entry)
+            _notify_catalog_library(saved, getattr(best_step, "backtest_result", None) or result)
             cache_manager.save(
                 cache_key,
                 cached_data[0] if cached_data else markdown,
@@ -368,6 +399,7 @@ def _try_soft_pass_after_reflection(
             created_at=datetime.now(UTC),
         )
         saved = library_manager.register(entry)
+        _notify_catalog_library(saved, cand)
         if experience_memory is not None:
             try:
                 experience_memory.record_success(

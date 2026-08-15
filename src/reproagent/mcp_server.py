@@ -45,9 +45,18 @@ def _run_library_backtest(expression: str) -> dict:
     from reproagent.reproducer.backtester import StrategyBacktester
     from reproagent.reproducer.data_loader import DataLoader
     from reproagent.reproducer.polars_engine import PolarsEngine
-    from reproagent.settings import get_settings
+    from reproagent.settings import Settings, get_settings
 
-    settings = get_settings()
+    base = get_settings()
+    settings = Settings(
+        _env_file=None,
+        app_env="dev",
+        data_source="local",
+        local_data_path=base.local_data_path,
+        data_dir=base.data_dir,
+        allow_mock_llm=True,
+        parser_backend="finpdfpro",
+    )
     loader = DataLoader(settings)
     start = date.fromisoformat("2023-01-02")
     end = date.fromisoformat("2023-02-10")
