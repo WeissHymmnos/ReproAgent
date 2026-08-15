@@ -89,22 +89,29 @@ class LayoutExtractor:
                 f"expected finpdfpro>=0.5.0, got {version} from {module_file}"
             )
 
+        profile = getattr(self.settings, "finpdfpro_profile", None) or "lite"
         overrides: dict = {
-            "profile": getattr(self.settings, "finpdfpro_profile", None) or "balanced",
-            "vlm_backend": self.settings.finpdfpro_vlm_backend,
+            "profile": profile,
+            "vlm_backend": getattr(self.settings, "finpdfpro_vlm_backend", None) or "none",
             "formula_backend": getattr(self.settings, "finpdfpro_formula_backend", None)
-            or "l1",
+            or "l0",
             "resume": True,
             "cache_dir": str(self.settings.cache_dir / "finpdfpro"),
             "out_dir": str(self.settings.cache_dir / "finpdfpro_out"),
             "strip_headers_footers": True,
             "reading_order": "columns",
-            "parse_method": "auto",
+            "parse_method": "txt" if profile in {"lite", "fast"} else "auto",
+            "allow_ocr": profile in {"balanced", "quality"},
+            "allow_structure": profile in {"balanced", "quality"},
+            "allow_vlm": False,
+            "workers": 1,
+            "cpu_threads": 2,
         }
-        mode = getattr(self.settings, "finpdfpro_mode", None)
-        if mode:
-            overrides["mode"] = mode
-        if overrides["vlm_backend"] and overrides["vlm_backend"] != "none":
+        if profile not in {"lite", "fast"}:
+            mode = getattr(self.settings, "finpdfpro_mode", None)
+            if mode:
+                overrides["mode"] = mode
+        if overrides["vlm_backend"] and overrides["vlm_backend"] != "none" and profile == "quality":
             overrides["allow_vlm"] = True
 
         try:

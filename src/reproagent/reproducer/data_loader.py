@@ -60,25 +60,23 @@ def _rq_cache_roots() -> tuple[Path, Path]:
 
 
 def _pandas_to_polars(df: Any) -> pl.DataFrame:
-    """Convert a RiceQuant pandas frame without requiring pyarrow.
-
-    rqdatac often emits pandas nullable dtypes (Int64/Float64). Polars'
-    ``from_pandas`` then asks for pyarrow. Coerce those columns first.
-    """
-    try:
-        return _pandas_to_polars(df)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("pl.from_pandas failed (%s); coercing nullable dtypes", exc)
+    """Convert a RiceQuant pandas frame without pyarrow or nullable-dtype hangs."""
+    if df is None:
+        return pl.DataFrame()
     coerced = df.copy()
     for col in list(coerced.columns):
         dtype = str(coerced[col].dtype)
         if dtype in {"Int64", "Int32", "UInt64", "UInt32", "Float64", "Float32"}:
             coerced[col] = coerced[col].astype("float64")
-        elif dtype in {"boolean", "Boolean"}:
+        elif dtype in {"boolean", "Boolean", "string", "String"}:
             coerced[col] = coerced[col].astype("object")
-        elif dtype in {"string", "String"}:
-            coerced[col] = coerced[col].astype("object")
-    return _pandas_to_polars(coerced)
+    try:
+        return pl.DataFrame(coerced.to_dict(orient="list"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("dict→polars failed (%s); retrying object columns", exc)
+    for col in list(coerced.columns):
+        coerced[col] = coerced[col].astype("object")
+    return pl.DataFrame(coerced.to_dict(orient="list"))
 
 
 def is_cb_universe(universe: str | list[str]) -> bool:
