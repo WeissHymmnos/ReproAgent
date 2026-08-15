@@ -57,9 +57,13 @@ class StrategyBacktester:
         ).drop_nulls()
 
         ic_df = compute_ic(factor_values, forward_returns)
-        ic_mean = _as_float(ic_df["ic"].mean()) if len(ic_df) > 0 else 0.0
-        ic_std = _as_float(ic_df["ic"].std()) if len(ic_df) > 1 else 0.0
-        ic_ir = ic_mean / ic_std if ic_std != 0 else 0.0
+        if len(ic_df) > 0:
+            ic_mean = _as_float(ic_df["ic"].mean())
+            ic_std = _as_float(ic_df["ic"].std()) if len(ic_df) > 1 else 0.0
+            ic_ir = ic_mean / ic_std if ic_std != 0 else 0.0
+        else:
+            ic_mean = float("nan")
+            ic_ir = float("nan")
 
         num_groups = params.num_groups
 
