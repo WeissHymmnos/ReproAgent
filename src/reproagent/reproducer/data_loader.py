@@ -358,11 +358,20 @@ class DataLoader:
         # 命名 universe（all / 指数 / 转债）不按代码过滤；列表则按代码过滤
         named = {
             "all",
+            "local_panel",
             "csi300",
+            "hs300",
+            "沪深300",
             "csi500",
+            "zz500",
+            "中证500",
             "csi1000",
+            "中证1000",
             "全a股",
             "全A股",
+            "全a",
+            "a股",
+            "全市场",
             *{a.lower() for a in _CB_UNIVERSE_ALIASES},
         }
         if isinstance(universe, str):
