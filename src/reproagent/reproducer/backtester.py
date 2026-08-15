@@ -66,25 +66,30 @@ class StrategyBacktester:
             ic_ir = float("nan")
 
         num_groups = params.num_groups
+        n_assets = 0
+        if "asset" in factor_values.columns and factor_values.height:
+            n_assets = int(factor_values.select(pl.col("asset").n_unique()).item() or 0)
+        # 2-stock local panels cannot fill quintiles: long/short join would be empty.
+        effective_groups = int(num_groups) if n_assets >= int(num_groups or 0) else max(2, n_assets or 2)
 
         grouped = (
             factor_values.drop_nulls("factor_value")
             .with_columns(pl.col("factor_value").rank(method="ordinal").over("date").alias("rank"))
             .with_columns(
-                (pl.col("rank") / (pl.col("rank").max().over("date") + 1) * num_groups)
+                (pl.col("rank") / (pl.col("rank").max().over("date") + 1) * effective_groups)
                 .cast(pl.Int32)
                 .alias("group")
             )
         )
 
-        group_returns = compute_group_returns(grouped, forward_returns, num_groups)
+        group_returns = compute_group_returns(grouped, forward_returns, effective_groups)
 
         df = grouped.join(forward_returns, on=["date", "asset"], how="inner")
         daily_group_ret = df.group_by(["date", "group"]).agg(
             pl.col("forward_return").mean().alias("daily_return")
         )
 
-        long_ret = daily_group_ret.filter(pl.col("group") == num_groups - 1).rename(
+        long_ret = daily_group_ret.filter(pl.col("group") == effective_groups - 1).rename(
             {"daily_return": "long_ret"}
         )
         short_ret = daily_group_ret.filter(pl.col("group") == 0).rename(
@@ -99,7 +104,7 @@ class StrategyBacktester:
 
         # --- Turnover & Transaction Costs ---
         # 1. 计算多空两端的权重
-        long_weights = grouped.filter(pl.col("group") == num_groups - 1).with_columns(
+        long_weights = grouped.filter(pl.col("group") == effective_groups - 1).with_columns(
             (pl.lit(1.0) / pl.len().over("date")).alias("weight")
         )
         short_weights = grouped.filter(pl.col("group") == 0).with_columns(
