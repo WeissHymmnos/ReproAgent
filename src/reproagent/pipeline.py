@@ -419,7 +419,11 @@ def _aggregate_status(factor_results: list[dict[str, Any]]) -> str:
     return next(iter(statuses))
 
 
-def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
+def reproduce_report(
+    pdf_path: Path,
+    settings: Settings,
+    backtest_kwargs: dict[str, Any] | None = None,
+) -> dict | None:
     import logging
 
     from reproagent.cache.cache_manager import CacheManager

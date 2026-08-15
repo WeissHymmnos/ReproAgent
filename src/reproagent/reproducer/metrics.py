@@ -164,6 +164,22 @@ def compute_alpha_decay(
     return result
 
 
+def serialize_equity_returns(path: Path) -> dict[str, float]:
+    """Daily long-short returns from equity_curve.parquet (`date` + `ls_return`)."""
+    if path is None or not Path(path).exists():
+        return {}
+    df = pl.read_parquet(path)
+    if "date" not in df.columns or "ls_return" not in df.columns:
+        return {}
+    out: dict[str, float] = {}
+    for d, r in zip(df["date"].to_list(), df["ls_return"].to_list()):
+        if r is None:
+            continue
+        key = d.isoformat() if hasattr(d, "isoformat") else str(d)
+        out[key] = float(r)
+    return out
+
+
 def compute_monotonicity(
     grouped_returns: pl.DataFrame,
 ) -> float:
