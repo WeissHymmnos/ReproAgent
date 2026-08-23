@@ -58,3 +58,61 @@ def test_is_readable_corrupt(tmp_path: Path) -> None:
     bad.write_bytes(b"%PDF-1.4\nnot really a pdf body\n")
     result = is_readable(bad)
     assert isinstance(result, bool)
+
+
+def test_upload_junk_pdf_is_invalid_not_crash(tmp_path: Path) -> None:
+    from reproagent.ingestion.uploader import upload_pdf
+    from reproagent.ingestion.validator import validate_pdf
+
+    junk = tmp_path / "not-a-pdf.pdf"
+    junk.write_text("this is not a pdf\n", encoding="utf-8")
+    report = upload_pdf(junk)
+    assert report.page_count == 0
+    report = validate_pdf(report)
+    assert report.validation_status == "invalid"
+    assert report.validation_errors
+
+
+def test_ingest_cli_junk_pdf_clean_exit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from typer.testing import CliRunner
+
+    from reproagent.cli import app
+    from reproagent.settings import get_settings
+
+    junk = tmp_path / "not-a-pdf.pdf"
+    junk.write_text("this is not a pdf\n", encoding="utf-8")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    get_settings.cache_clear()
+    try:
+        result = CliRunner().invoke(app, ["ingest", str(junk)])
+        assert result.exit_code == 1
+        out = result.output
+        assert "ingest failed" in out
+        assert "Traceback" not in out
+    finally:
+        get_settings.cache_clear()
+
+
+def test_ingest_cli_same_pdf_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from typer.testing import CliRunner
+
+    from reproagent.cli import app
+    from reproagent.settings import get_settings
+
+    pdf = Path("tests/fixtures/sample_reports/minimal.pdf")
+    if not pdf.exists():
+        pytest.skip("fixture pdf missing")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    get_settings.cache_clear()
+    try:
+        runner = CliRunner()
+        first = runner.invoke(app, ["ingest", str(pdf)])
+        second = runner.invoke(app, ["ingest", str(pdf)])
+        assert first.exit_code == 0, first.output
+        assert second.exit_code == 0, second.output
+        assert "already ingested" in second.output
+        first_id = first.output.split("id=", 1)[1].split()[0]
+        second_id = second.output.split("id=", 1)[1].split()[0]
+        assert first_id == second_id
+    finally:
+        get_settings.cache_clear()

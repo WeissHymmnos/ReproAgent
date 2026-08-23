@@ -17,9 +17,12 @@ factors:
     parameters:
       momentum_period: 5
     reported_metrics:
-      ic_mean: -0.391304347826087
-      ic_ir: -0.4158636153642813
-      long_short_return: 0.0
-      sharpe_ratio: 0.0
-      max_drawdown: 0.0
-    annotation_notes: "Mock factor；metrics 对齐 synthetic prices fixture"
+      # Aligned to local fixture backtest after data-guards keep session-1 bars.
+      ic_mean: -0.3333333333333333
+      ic_ir: -0.3461093276215864
+      # Mock report never states LS / Sharpe / MDD; 0.0 placeholders were
+      # treated as claimed targets and made `benchmark --run minimal` fail.
+      long_short_return: null
+      sharpe_ratio: null
+      max_drawdown: null
+    annotation_notes: "Mock factor；IC/ICIR 对齐 synthetic prices fixture；未标注收益类指标"

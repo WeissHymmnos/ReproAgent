@@ -38,7 +38,11 @@ def test_resolve_named_universe_uses_index_components(tmp_path, monkeypatch) -> 
     # Isolate from host disk instrument cache
     import reproagent.reproducer.data_loader as dl_mod
 
-    monkeypatch.setattr(dl_mod, "_RQ_INST_CACHE_DIR", tmp_path / "inst")
+    monkeypatch.setattr(
+        dl_mod,
+        "_rq_cache_roots",
+        lambda: (tmp_path / "prices", tmp_path / "inst"),
+    )
 
     with patch.object(loader, "_ensure_rqdatac_init", return_value=fake_rq):
         codes = loader._resolve_ricequant_instruments("csi300", as_of=date(2024, 6, 1))

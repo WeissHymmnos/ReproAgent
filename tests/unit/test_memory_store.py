@@ -160,6 +160,7 @@ def test_enqueue_review_with_payload(repo: Repository) -> None:
         "rep-x",
         "Reflection failed for mock_momentum: exhausted",
         payload={"failure_type": "reflection_exhausted", "factor_name": "mock_momentum"},
+        human_only=False,
     )
     assert entry_id
     item = repo.dequeue_review()

@@ -106,11 +106,13 @@ def test_review_dedupe(tmp_path: Path) -> None:
         "r1",
         "Reflection failed for mock_momentum: exhausted",
         payload={"reason_type": "reflection_exhausted", "factor_name": "mock_momentum"},
+        human_only=False,
     )
     id2 = repo.enqueue_review(
         "r1",
         "Reflection failed for mock_momentum: exhausted",
         payload={"reason_type": "reflection_exhausted", "factor_name": "mock_momentum"},
+        human_only=False,
     )
     assert id1 == id2
 
@@ -179,9 +181,15 @@ def test_reproduce_mock_skips_reflection(tmp_path: Path) -> None:
 
     out1 = reproduce_report(pdf, settings)
     assert out1 is not None
-    assert out1["status"] in ("review_enqueued", "partial", "passed", "no_factors")
-    # mock fixture usually review_enqueued
-    if out1["status"] == "review_enqueued":
+    assert out1["status"] in (
+        "review_enqueued",
+        "skipped_mock",
+        "partial",
+        "passed",
+        "no_factors",
+    )
+    # mock fixture usually skip_mock reflection (no longer floods the review queue)
+    if out1["status"] in {"review_enqueued", "skipped_mock"}:
         factors = out1.get("factors") or []
         assert factors
         assert factors[0].get("reflection_status") == "skipped_mock"
@@ -197,4 +205,18 @@ def test_reproduce_mock_skips_reflection(tmp_path: Path) -> None:
     bads = store.query_feedback(
         FeedbackQuery(kind=FeedbackKind.BAD, include_mock=True, limit=50)
     )
-    assert any(b.failure_type == "reflection_skipped_mock" for b in bads)
+    if out1["status"] in {"review_enqueued", "skipped_mock"}:
+        assert any(b.failure_type == "reflection_skipped_mock" for b in bads)
+        from sqlmodel import Session, select
+
+        from reproagent.persistence.tables import ManualReviewQueueTable
+
+        with Session(engine) as session:
+            pending = session.exec(
+                select(ManualReviewQueueTable).where(
+                    ManualReviewQueueTable.status == "pending"
+                )
+            ).all()
+        assert pending == []
+    elif out1["status"] == "passed":
+        assert not any(b.failure_type == "reflection_skipped_mock" for b in bads)

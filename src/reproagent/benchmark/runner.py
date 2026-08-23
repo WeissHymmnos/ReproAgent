@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -76,14 +75,23 @@ def _spec_from_gt_factor(factor: dict[str, Any]) -> ParsedFactorSpec:
 
     reported = None
     rm = factor.get("reported_metrics")
-    if isinstance(rm, dict) and any(v is not None for v in rm.values()):
-        reported = ReportedMetrics(
-            ic_mean=rm.get("ic_mean"),
-            ic_ir=rm.get("ic_ir"),
-            long_short_return=rm.get("long_short_return"),
-            sharpe_ratio=rm.get("sharpe_ratio"),
-            max_drawdown=rm.get("max_drawdown"),
-        )
+    if isinstance(rm, dict):
+        claimed: dict[str, Any] = {}
+        for key in (
+            "ic_mean",
+            "ic_ir",
+            "long_short_return",
+            "sharpe_ratio",
+            "max_drawdown",
+        ):
+            if key not in rm:
+                continue
+            value = rm[key]
+            if value is None:
+                continue
+            claimed[key] = value
+        if claimed:
+            reported = ReportedMetrics(**claimed)
 
     rebalance = factor.get("rebalance_frequency", "monthly")
     if rebalance not in ("daily", "weekly", "monthly", "quarterly"):
@@ -265,8 +273,9 @@ def run_benchmark(
     out = output_dir or (paths.data_dir / "benchmark" / report_id)
     out.mkdir(parents=True, exist_ok=True)
     out_path = out / "result.json"
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False, indent=2, default=str)
+    from reproagent.utils.jsonutil import dumps as json_dumps
+
+    out_path.write_text(json_dumps(result, indent=2), encoding="utf-8")
     result["output_path"] = str(out_path)
     return result
 

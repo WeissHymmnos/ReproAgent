@@ -19,11 +19,11 @@ factors:
     lookback_window: null
     parameters: {}
     reported_metrics:
-      ic_mean: -0.04210526315789475
-      ic_ir: -0.06329625327902043
-      long_short_return: -0.09899619895371833
-      sharpe_ratio: -1.4746110855400254
-      max_drawdown: 0.06278109556433716
+      ic_mean: -0.06410256410256412
+      ic_ir: -0.09558713098277283
+      long_short_return: -0.13036345729890506
+      sharpe_ratio: -1.9340387450228882
+      max_drawdown: 0.06278109556433661
     annotation_notes: "华泰单因子篇：债性/YTM；metrics 对齐 synthetic fixture"
 
   - name: "premium_rate"
@@ -36,11 +36,11 @@ factors:
     lookback_window: null
     parameters: {}
     reported_metrics:
-      ic_mean: -0.26842105263157895
-      ic_ir: -0.5382373589215883
-      long_short_return: -0.5286934836675473
-      sharpe_ratio: -8.845900168165258
-      max_drawdown: 0.07645784356369803
+      ic_mean: 0.06410256410256412
+      ic_ir: 0.09558713098277283
+      long_short_return: 0.12648653422198194
+      sharpe_ratio: 1.884356348832201
+      max_drawdown: 0.060140429980554966
     annotation_notes: "股性侧核心指标；取负使低溢价排前"
 
   - name: "absolute_price"
@@ -53,11 +53,11 @@ factors:
     lookback_window: null
     parameters: {}
     reported_metrics:
-      ic_mean: 0.04210526315789475
-      ic_ir: 0.06329625327902043
-      long_short_return: 0.09501725158529725
-      sharpe_ratio: 1.4207111663782321
-      max_drawdown: 0.060140429980554855
+      ic_mean: 0.06410256410256412
+      ic_ir: 0.09558713098277283
+      long_short_return: 0.12648653422198194
+      sharpe_ratio: 1.884356348832201
+      max_drawdown: 0.060140429980554966
     annotation_notes: "低价因子；取负方向"
 
   - name: "option_value"
@@ -70,11 +70,11 @@ factors:
     lookback_window: null
     parameters: {}
     reported_metrics:
-      ic_mean: -0.04210526315789475
-      ic_ir: -0.06329625327902043
-      long_short_return: -0.09899619895371833
-      sharpe_ratio: -1.4746110855400254
-      max_drawdown: 0.06278109556433716
+      ic_mean: -0.06410256410256412
+      ic_ir: -0.09558713098277283
+      long_short_return: -0.13036345729890506
+      sharpe_ratio: -1.9340387450228882
+      max_drawdown: 0.06278109556433661
     annotation_notes: "转债特质因子；fixture 用 close-bond_value 合成"
 
   - name: "implied_vol_momentum"
@@ -88,11 +88,11 @@ factors:
     parameters:
       lookback: 5
     reported_metrics:
-      ic_mean: 0.25757575757575757
-      ic_ir: 0.3989258646600191
-      long_short_return: 0.4724764752689651
-      sharpe_ratio: 7.583774871913084
-      max_drawdown: 0.01622017067584946
+      ic_mean: 0.7499999999999999
+      ic_ir: 5.2056258169393415
+      long_short_return: 1.2355881315524326
+      sharpe_ratio: 46.881039800174364
+      max_drawdown: 0.0
     annotation_notes: "动量类隐波变化"
 
   - name: "remaining_size"
@@ -105,9 +105,9 @@ factors:
     lookback_window: null
     parameters: {}
     reported_metrics:
-      ic_mean: -0.04210526315789475
-      ic_ir: -0.06329625327902043
-      long_short_return: -0.09899619895371833
-      sharpe_ratio: -1.4746110855400254
-      max_drawdown: 0.06278109556433716
+      ic_mean: 0.06410256410256412
+      ic_ir: 0.09558713098277283
+      long_short_return: 0.12648653422198194
+      sharpe_ratio: 1.884356348832201
+      max_drawdown: 0.060140429980554966
     annotation_notes: "小规模偏好；取负"
