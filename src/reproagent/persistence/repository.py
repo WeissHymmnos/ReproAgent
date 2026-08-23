@@ -12,14 +12,25 @@ from uuid import uuid4
 from sqlmodel import Session, select
 
 from reproagent.exceptions import PersistenceError
+from reproagent.utils.jsonutil import dumps as json_dumps
 from reproagent.models.factor_def import FactorDefinition
 from reproagent.models.library import FactorLibraryEntry, LibraryFilter
 from reproagent.models.reflection import ReflectionState, ReflectionStep
 from reproagent.models.report import ResearchReport
+from reproagent.models.memory import (
+    FeedbackQuery,
+    FeedbackRecord,
+    FeedbackSource,
+    ReportKnowledgeAtom,
+    ResearchArchetype,
+)
 from reproagent.persistence.tables import (
+    ArchetypeTable,
     FactorLibraryTable,
+    FeedbackMemoryTable,
     ManualReviewQueueTable,
     ReflectionStateTable,
+    ReportKnowledgeTable,
     ReportTable,
 )
 
@@ -71,6 +82,12 @@ def _to_report_row(report: ResearchReport) -> ReportTable:
 def _to_library_entry(row: FactorLibraryTable) -> FactorLibraryEntry:
     factor = FactorDefinition.model_validate_json(row.factor_json)
     tags = json.loads(row.tags_json or "[]")
+    try:
+        metrics = json.loads(getattr(row, "metrics_json", None) or "{}")
+    except json.JSONDecodeError:
+        metrics = {}
+    if not isinstance(metrics, dict):
+        metrics = {}
     return FactorLibraryEntry(
         id=row.id,
         factor=factor,
@@ -83,6 +100,7 @@ def _to_library_entry(row: FactorLibraryTable) -> FactorLibraryEntry:
         dedup_hash=row.dedup_hash,
         tags=tags,
         created_at=datetime.fromisoformat(row.created_at),
+        metrics=metrics,
     )
 
 
@@ -99,6 +117,7 @@ def _to_library_row(entry: FactorLibraryEntry) -> FactorLibraryTable:
         dedup_hash=entry.dedup_hash,
         tags_json=json.dumps(entry.tags, ensure_ascii=False),
         created_at=entry.created_at.isoformat(),
+        metrics_json=json_dumps(entry.metrics or {}),
     )
 
 
@@ -270,15 +289,42 @@ class Repository:
 
     # --- review queue ---
 
-    def enqueue_review(self, report_id: str, reason: str) -> str:
-        entry_id = uuid4().hex
+    def enqueue_review(
+        self,
+        report_id: str,
+        reason: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        human_only: bool = True,
+    ) -> str | None:
+        if human_only:
+            from reproagent.ingestion.review_queue import should_enqueue_human_review
+
+            if not should_enqueue_human_review(reason):
+                return None
+        payload_json = json.dumps(payload or {}, default=str, ensure_ascii=False)
         with Session(self.engine) as session:
+            existing = session.exec(
+                select(ManualReviewQueueTable).where(
+                    ManualReviewQueueTable.report_id == report_id,
+                    ManualReviewQueueTable.reason == reason,
+                    ManualReviewQueueTable.status == "pending",
+                )
+            ).first()
+            if existing is not None:
+                if payload is not None:
+                    existing.payload_json = payload_json
+                    session.add(existing)
+                    session.commit()
+                return existing.id
+            entry_id = uuid4().hex
             row = ManualReviewQueueTable(
                 id=entry_id,
                 report_id=report_id,
                 reason=reason,
                 status="pending",
                 created_at=_now_iso(),
+                payload_json=payload_json,
             )
             session.add(row)
             try:
@@ -287,6 +333,23 @@ class Repository:
                 session.rollback()
                 raise PersistenceError(f"enqueue_review failed: {exc}") from exc
         return entry_id
+
+    def get_review(self, entry_id: str) -> dict[str, Any] | None:
+        with Session(self.engine) as session:
+            row = session.get(ManualReviewQueueTable, entry_id)
+            if row is None:
+                return None
+            try:
+                payload = json.loads(row.payload_json or "{}")
+            except json.JSONDecodeError:
+                payload = {}
+            return {
+                "id": row.id,
+                "report_id": row.report_id,
+                "reason": row.reason,
+                "status": row.status,
+                "payload": payload,
+            }
 
     def dequeue_review(self) -> tuple[str, str, str] | None:
         with Session(self.engine) as session:
@@ -301,11 +364,54 @@ class Repository:
                 return None
             return (row.id, row.report_id, row.reason)
 
+    def dismiss_capability_reviews(self) -> dict[str, Any]:
+        """Mark pending system-capability failures as dismissed_capability.
+
+        Does not approve or reject: those remain human decisions.
+        """
+        from reproagent.ingestion.review_queue import review_capability_kind
+
+        dismissed = 0
+        kept = 0
+        buckets: dict[str, int] = {}
+        with Session(self.engine) as session:
+            rows = session.exec(
+                select(ManualReviewQueueTable).where(
+                    ManualReviewQueueTable.status == "pending"
+                )
+            ).all()
+            for row in rows:
+                kind = review_capability_kind(row.reason or "")
+                if kind is None:
+                    kept += 1
+                    continue
+                row.status = "dismissed_capability"
+                session.add(row)
+                dismissed += 1
+                buckets[kind] = buckets.get(kind, 0) + 1
+            try:
+                session.commit()
+            except Exception as exc:  # noqa: BLE001
+                session.rollback()
+                raise PersistenceError(
+                    f"dismiss_capability_reviews failed: {exc}"
+                ) from exc
+        return {
+            "scanned": dismissed + kept,
+            "dismissed": dismissed,
+            "kept": kept,
+            "buckets": buckets,
+        }
+
     def update_review_status(self, entry_id: str, status: str) -> None:
         with Session(self.engine) as session:
             row = session.get(ManualReviewQueueTable, entry_id)
             if row is None:
                 raise PersistenceError(f"update_review_status: entry {entry_id} not found")
+            if row.status != "pending":
+                raise PersistenceError(
+                    f"update_review_status: entry {entry_id} is {row.status}, not pending"
+                )
             row.status = status
             session.add(row)
             try:
@@ -313,3 +419,111 @@ class Repository:
             except Exception as exc:  # noqa: BLE001
                 session.rollback()
                 raise PersistenceError(f"update_review_status failed: {exc}") from exc
+
+    # --- research memory ---
+
+    def save_knowledge_atom(self, atom: ReportKnowledgeAtom) -> ReportKnowledgeAtom:
+        with Session(self.engine) as session:
+            row = session.get(ReportKnowledgeTable, atom.id)
+            payload = ReportKnowledgeTable(
+                id=atom.id,
+                report_id=atom.report_id,
+                atom_json=atom.model_dump_json(),
+                created_at=atom.created_at.isoformat(),
+            )
+            if row is None:
+                session.add(payload)
+            else:
+                row.report_id = payload.report_id
+                row.atom_json = payload.atom_json
+                row.created_at = payload.created_at
+                session.add(row)
+            session.commit()
+        return atom
+
+    def list_knowledge_atoms(
+        self, report_id: str | None = None, *, limit: int = 100
+    ) -> list[ReportKnowledgeAtom]:
+        with Session(self.engine) as session:
+            stmt = select(ReportKnowledgeTable)
+            if report_id:
+                stmt = stmt.where(ReportKnowledgeTable.report_id == report_id)
+            stmt = stmt.order_by(ReportKnowledgeTable.created_at).limit(limit)
+            rows = session.exec(stmt).all()
+        return [ReportKnowledgeAtom.model_validate_json(row.atom_json) for row in rows]
+
+    def save_archetype(self, archetype: ResearchArchetype) -> ResearchArchetype:
+        with Session(self.engine) as session:
+            row = session.get(ArchetypeTable, archetype.id)
+            payload = ArchetypeTable(
+                id=archetype.id,
+                family=str(archetype.family),
+                archetype_json=archetype.model_dump_json(),
+                updated_at=archetype.updated_at.isoformat(),
+            )
+            if row is None:
+                session.add(payload)
+            else:
+                row.family = payload.family
+                row.archetype_json = payload.archetype_json
+                row.updated_at = payload.updated_at
+                session.add(row)
+            session.commit()
+        return archetype
+
+    def get_archetype(self, archetype_id: str) -> ResearchArchetype | None:
+        with Session(self.engine) as session:
+            row = session.get(ArchetypeTable, archetype_id)
+            if row is None:
+                return None
+            return ResearchArchetype.model_validate_json(row.archetype_json)
+
+    def save_feedback(self, record: FeedbackRecord) -> FeedbackRecord:
+        with Session(self.engine) as session:
+            row = session.get(FeedbackMemoryTable, record.id)
+            payload = FeedbackMemoryTable(
+                id=record.id,
+                kind=str(record.kind),
+                source=str(record.source),
+                mechanism_family=str(record.mechanism_family) if record.mechanism_family else None,
+                factor_name=record.factor_name,
+                root_cause=record.root_cause,
+                failure_type=record.failure_type,
+                record_json=record.model_dump_json(),
+                created_at=record.created_at.isoformat(),
+            )
+            if row is None:
+                session.add(payload)
+            else:
+                row.kind = payload.kind
+                row.source = payload.source
+                row.mechanism_family = payload.mechanism_family
+                row.factor_name = payload.factor_name
+                row.root_cause = payload.root_cause
+                row.failure_type = payload.failure_type
+                row.record_json = payload.record_json
+                session.add(row)
+            session.commit()
+        return record
+
+    def query_feedback(self, query: FeedbackQuery | None = None) -> list[FeedbackRecord]:
+        q = query or FeedbackQuery()
+        with Session(self.engine) as session:
+            stmt = select(FeedbackMemoryTable)
+            if q.kind is not None:
+                stmt = stmt.where(FeedbackMemoryTable.kind == str(q.kind))
+            if q.mechanism_family is not None:
+                stmt = stmt.where(
+                    FeedbackMemoryTable.mechanism_family == str(q.mechanism_family)
+                )
+            if q.factor_name:
+                stmt = stmt.where(FeedbackMemoryTable.factor_name == q.factor_name)
+            if q.root_cause:
+                stmt = stmt.where(FeedbackMemoryTable.root_cause == q.root_cause)
+            if q.failure_type:
+                stmt = stmt.where(FeedbackMemoryTable.failure_type == q.failure_type)
+            if not q.include_mock:
+                stmt = stmt.where(FeedbackMemoryTable.source != str(FeedbackSource.MOCK))
+            stmt = stmt.order_by(FeedbackMemoryTable.created_at).limit(q.limit)
+            rows = session.exec(stmt).all()
+        return [FeedbackRecord.model_validate_json(row.record_json) for row in rows]

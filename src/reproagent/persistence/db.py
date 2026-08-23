@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -9,6 +10,8 @@ from typing import Any
 
 from sqlalchemy import event
 from sqlmodel import Session, SQLModel, create_engine
+
+_INIT_LOCK = threading.Lock()
 
 
 def get_engine(db_path: Path, *, echo: bool = False) -> Any:
@@ -32,11 +35,50 @@ def get_engine(db_path: Path, *, echo: bool = False) -> Any:
 
 
 def init_db(engine: Any) -> None:
-    """create_all 初始化表结构。"""
+    """create_all 初始化表结构（进程内串行，防并发建表竞态）。"""
+    with _INIT_LOCK:
+        _init_db_locked(engine)
+
+
+def _init_db_locked(engine: Any) -> None:
     # 导入表模块以注册 metadata
     from reproagent.persistence import tables as _tables  # noqa: F401
 
     SQLModel.metadata.create_all(engine)
+    _migrate_review_payload(engine)
+    _migrate_library_metrics(engine)
+
+
+def _migrate_review_payload(engine: Any) -> None:
+    """Add payload_json to existing manual_review_queue rows."""
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        rows = conn.execute(text("PRAGMA table_info(manual_review_queue)")).fetchall()
+        cols = {row[1] for row in rows}
+        if rows and "payload_json" not in cols:
+            conn.execute(
+                text(
+                    "ALTER TABLE manual_review_queue "
+                    "ADD COLUMN payload_json VARCHAR DEFAULT '{}'"
+                )
+            )
+
+
+def _migrate_library_metrics(engine: Any) -> None:
+    """Add metrics_json to existing factor_library rows."""
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        rows = conn.execute(text("PRAGMA table_info(factor_library)")).fetchall()
+        cols = {row[1] for row in rows}
+        if rows and "metrics_json" not in cols:
+            conn.execute(
+                text(
+                    "ALTER TABLE factor_library "
+                    "ADD COLUMN metrics_json VARCHAR DEFAULT '{}'"
+                )
+            )
 
 
 @contextmanager

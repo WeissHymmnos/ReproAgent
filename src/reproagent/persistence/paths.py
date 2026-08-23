@@ -50,6 +50,22 @@ class AppPaths:
     def logs_dir(self) -> Path:
         return self.data_dir / "logs"
 
+    @property
+    def memory_dir(self) -> Path:
+        return self.data_dir / "memory"
+
+    @property
+    def memory_feedback_good_dir(self) -> Path:
+        return self.memory_dir / "feedback" / "good"
+
+    @property
+    def memory_feedback_bad_dir(self) -> Path:
+        return self.memory_dir / "feedback" / "bad"
+
+    @property
+    def memory_knowledge_dir(self) -> Path:
+        return self.memory_dir / "knowledge"
+
     def report_dir(self, report_id: str) -> Path:
         return self.reports_dir / report_id
 
@@ -60,13 +76,26 @@ class AppPaths:
         return self.cache_dir / cache_key
 
     def ensure_layout(self) -> None:
-        """创建顶层目录结构。"""
-        for d in (
-            self.cache_dir,
-            self.reports_dir,
-            self.factors_dir,
-            self.wiki_dir,
-            self.wiki_factors_dir,
-            self.logs_dir,
-        ):
-            d.mkdir(parents=True, exist_ok=True)
+        """创建顶层目录结构；不可写时抛出干净的 ConfigurationError。"""
+        from reproagent.exceptions import ConfigurationError
+
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            for d in (
+                self.cache_dir,
+                self.reports_dir,
+                self.factors_dir,
+                self.wiki_dir,
+                self.wiki_factors_dir,
+                self.logs_dir,
+                self.memory_dir,
+                self.memory_feedback_good_dir,
+                self.memory_feedback_bad_dir,
+                self.memory_knowledge_dir,
+            ):
+                d.mkdir(parents=True, exist_ok=True)
+        except PermissionError as exc:
+            raise ConfigurationError(
+                f"data_dir is not writable: {self.data_dir} — "
+                "fix permissions or point DATA_DIR at a writable location"
+            ) from exc

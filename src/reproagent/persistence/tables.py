@@ -35,6 +35,7 @@ class FactorLibraryTable(SQLModel, table=True):
     dedup_hash: str = Field(index=True)
     tags_json: str
     created_at: str
+    metrics_json: str = "{}"
 
 
 class ReflectionStateTable(SQLModel, table=True):
@@ -54,5 +55,38 @@ class ManualReviewQueueTable(SQLModel, table=True):
     id: str = Field(primary_key=True)
     report_id: str = Field(foreign_key="reports.id", index=True)
     reason: str
-    status: str  # pending / approved / rejected
+    status: str  # pending / approved / rejected / dismissed_capability
+    created_at: str
+    payload_json: str = "{}"
+
+
+class ReportKnowledgeTable(SQLModel, table=True):
+    __tablename__ = "report_knowledge"
+
+    id: str = Field(primary_key=True)
+    report_id: str = Field(index=True)
+    atom_json: str
+    created_at: str
+
+
+class ArchetypeTable(SQLModel, table=True):
+    __tablename__ = "archetypes"
+
+    id: str = Field(primary_key=True)
+    family: str = Field(index=True)
+    archetype_json: str
+    updated_at: str
+
+
+class FeedbackMemoryTable(SQLModel, table=True):
+    __tablename__ = "feedback_memory"
+
+    id: str = Field(primary_key=True)
+    kind: str = Field(index=True)
+    source: str = Field(index=True)
+    mechanism_family: str | None = Field(default=None, index=True)
+    factor_name: str | None = None
+    root_cause: str | None = None
+    failure_type: str | None = None
+    record_json: str
     created_at: str
