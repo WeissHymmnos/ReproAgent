@@ -1,5 +1,7 @@
 # ReproAgent
 
+> English overview: [README_EN.md](README_EN.md)
+
 把卖方研报里的因子自动复现出来。喂一篇 PDF 研报(或者现成的 Markdown),
 它解析出因子定义,在本地数据上跑回测,跟研报声称的指标对偏差;
 对不上就按根因改公式重试,最多三次,还不行就进人工复核。
