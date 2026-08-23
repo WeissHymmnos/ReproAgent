@@ -320,7 +320,7 @@ def find_backtest_artifact_dir(data_dir: Path, entry: Any) -> Path | None:
     return max(hits, key=lambda p: p.stat().st_mtime)
 
 
-def serialize_equity_returns(path: Path) -> dict[str, float]:
+def serialize_equity_returns(path: Path | None) -> dict[str, float]:
     """Daily long-short returns from equity_curve.parquet (`date` + `ls_return`)."""
     if path is None or not Path(path).exists():
         return {}

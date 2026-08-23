@@ -173,7 +173,9 @@ class StrategyBacktester:
             if "asset" in factor_values.columns and factor_values.height:
                 n_assets = int(factor_values.select(pl.col("asset").n_unique()).item() or 0)
             # 2-stock local panels cannot fill quintiles: long/short join would be empty.
-            effective_groups = int(num_groups) if n_assets >= int(num_groups or 0) else max(2, n_assets or 2)
+            effective_groups = (
+                int(num_groups) if n_assets >= int(num_groups or 0) else max(2, n_assets or 2)
+            )
             grouped = (
                 factor_values.drop_nulls("factor_value")
                 .with_columns(pl.col("factor_value").rank(method="ordinal").over("date").alias("rank"))
@@ -337,7 +339,9 @@ class StrategyBacktester:
                     (pl.col("weight") * pl.col("forward_return")).sum().alias("ls_return_raw")
                 ).sort("date")
             else:
-                ls_ret = pl.DataFrame({"date": forward_returns["date"].unique().sort(), "ls_return_raw": 0.0})
+                ls_ret = pl.DataFrame(
+                    {"date": forward_returns["date"].unique().sort(), "ls_return_raw": 0.0}
+                )
 
         # 2. 计算调仓引发的权重变化 (w_t - w_{t-1})
         if weights.is_empty() or ls_ret.is_empty():
@@ -349,7 +353,11 @@ class StrategyBacktester:
                 empty_ls = empty_ls.with_columns(pl.col("ls_return_raw").alias("ls_return"))
             ls_ret = empty_ls
             avg_turnover = 0.0
-            ls_series = ls_ret["ls_return"] if "ls_return" in ls_ret.columns else pl.Series("ls_return", [], dtype=pl.Float64)
+            ls_series = (
+                ls_ret["ls_return"]
+                if "ls_return" in ls_ret.columns
+                else pl.Series("ls_return", [], dtype=pl.Float64)
+            )
             sharpe = compute_sharpe(ls_series)
             equity_curve = (1 + ls_series).cum_prod() if ls_series.len() else ls_series
             mdd = compute_max_drawdown(equity_curve) if ls_series.len() else 0.0

@@ -73,9 +73,12 @@ def _article_repro_score(path: Path) -> int:
     score = 10
     if "选股因子" in name:
         score += 4
-    if any(k in name for k in ("量价", "换手", "市值", "动量", "波动", "反转", "正交", "非线性", "质量")):
+    keys = ("量价", "换手", "市值", "动量", "波动", "反转", "正交", "非线性", "质量")
+    if any(k in name for k in keys):
         score += 3
-    if any(k in text for k in ("IC", "换手", "市值", "动量", "波动", "ROE", "选股", "多空", "截面")):
+    if any(
+        k in text for k in ("IC", "换手", "市值", "动量", "波动", "ROE", "选股", "多空", "截面")
+    ):
         score += 2
     if any(k in text for k in ("close", "Ref(", "CSZScore", "Rank(", "Std(", "收盘价")):
         score += 2

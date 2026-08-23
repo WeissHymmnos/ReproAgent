@@ -12,11 +12,8 @@ from uuid import uuid4
 from sqlmodel import Session, select
 
 from reproagent.exceptions import PersistenceError
-from reproagent.utils.jsonutil import dumps as json_dumps
 from reproagent.models.factor_def import FactorDefinition
 from reproagent.models.library import FactorLibraryEntry, LibraryFilter
-from reproagent.models.reflection import ReflectionState, ReflectionStep
-from reproagent.models.report import ResearchReport
 from reproagent.models.memory import (
     FeedbackQuery,
     FeedbackRecord,
@@ -24,6 +21,8 @@ from reproagent.models.memory import (
     ReportKnowledgeAtom,
     ResearchArchetype,
 )
+from reproagent.models.reflection import ReflectionState, ReflectionStep
+from reproagent.models.report import ResearchReport
 from reproagent.persistence.tables import (
     ArchetypeTable,
     FactorLibraryTable,
@@ -33,6 +32,7 @@ from reproagent.persistence.tables import (
     ReportKnowledgeTable,
     ReportTable,
 )
+from reproagent.utils.jsonutil import dumps as json_dumps
 
 
 def _now_iso() -> str:

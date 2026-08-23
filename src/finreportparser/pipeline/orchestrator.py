@@ -213,10 +213,8 @@ def parse_pdf(
                             continue
                         if isinstance(extract, str):
                             bbox = None
-                            html = None
                         else:
                             bbox = extract.bbox
-                            html = extract.html
                         repair = repair_table_gfm(str(gfm_raw))
                         gfm = repair.gfm
                         if is_acceptable_table(gfm):

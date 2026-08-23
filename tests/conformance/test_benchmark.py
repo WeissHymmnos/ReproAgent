@@ -10,7 +10,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-
 _BENCHMARK_DIR = Path(__file__).parent.parent / "fixtures" / "benchmark"
 
 

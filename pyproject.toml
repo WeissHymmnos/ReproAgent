@@ -77,6 +77,9 @@ select = ["E", "F", "I", "UP"]
 [tool.ruff.lint.per-file-ignores]
 # HTML template strings
 "src/reproagent/library/dashboard.py" = ["E501"]
+"src/reproagent/web/workstation.py" = ["E501"]
+# GFM table fixtures keep real-world wide rows
+"tests/unit/test_table_repair.py" = ["E501"]
 # Vendored PDF backend: style noise from upstream
 "src/finreportparser/**" = ["E501", "E701", "E702", "E731", "E722"]
 # Preserved prototype from 量化agent.zip — do not reformat as core code

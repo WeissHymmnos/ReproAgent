@@ -13,7 +13,6 @@ import numpy as np
 import polars as pl
 import pytest
 
-
 REF_PATH = Path(__file__).parent.parent / "fixtures" / "engine_validation" / "reference_values.json"
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import polars as pl
 
 from reproagent.library.classifier import StyleClassifier
@@ -120,8 +122,6 @@ class FactorLibraryManager:
 
     def backfill_metrics(self, data_dir: Path) -> int:
         """Fill empty ``entry.metrics`` from ``data_dir/backtest/<name>/`` artifacts."""
-        from pathlib import Path as _Path
-
         from reproagent.reproducer.metrics import (
             find_backtest_artifact_dir,
             metrics_from_artifact_dir,
@@ -132,7 +132,7 @@ class FactorLibraryManager:
             current = entry.metrics or {}
             if current.get("ic_series") or current.get("ic"):
                 continue
-            folder = find_backtest_artifact_dir(_Path(data_dir), entry)
+            folder = find_backtest_artifact_dir(Path(data_dir), entry)
             if folder is None:
                 continue
             entry.metrics = metrics_from_artifact_dir(folder)

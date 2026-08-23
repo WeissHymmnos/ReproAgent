@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from typing import Any
 
@@ -504,11 +505,16 @@ def build_mcp_server() -> object:
 
             payload = handle_search_library(query=query, style=style)
             return list(payload.get("items") or [])
-        except Exception:
+        except ImportError:
             pass
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "finaince search library failed, falling back: %s", exc
+            )
         try:
             return search_factor_library_impl(query, style, limit=50)
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).warning("library search failed: %s", exc)
             return []
 
     return mcp

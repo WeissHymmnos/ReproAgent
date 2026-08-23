@@ -1,20 +1,18 @@
 """对比项目解析(Markdown+截图)与纯图片视觉解析的效果。"""
 
-import asyncio
-import json
-import os
 import time
 from pathlib import Path
 
 from reproagent.ingestion.uploader import upload_pdf
-from reproagent.models.report import ResearchReport
 from reproagent.parser.llm_extractor import LLMExtractor
 from reproagent.parser.report_parser import ReportParser
 from reproagent.settings import Settings
-from reproagent.utils.pdf import pdf_pages_to_base64
 
 # 选择一份样本研报进行对比测试
-PDF_PATH = Path("/home/wh/Documents/KnowledgeBase/Quant/WH/华泰系列研报/华泰因子系列/估值因子/华泰多因子系列2：单因子测试之估值类因子.pdf")
+PDF_PATH = Path(
+    "/home/wh/Documents/KnowledgeBase/Quant/WH/华泰系列研报/华泰因子系列"
+    "/估值因子/华泰多因子系列2：单因子测试之估值类因子.pdf"
+)
 
 
 def run_comparison():

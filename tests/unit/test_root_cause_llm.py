@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, UTC
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 from reproagent.deviation.root_cause import classify_root_cause
@@ -67,4 +67,9 @@ def test_llm_fallback_without_key_returns_unknown() -> None:
     assert cause in {RootCause.UNKNOWN, RootCause.UNIVERSE_MISMATCH, RootCause.FORMULA_ERROR}
     # 若走到 LLM 分支应有 detail
     if cause == RootCause.UNKNOWN and dev.root_cause_detail:
-        assert "metrics" in dev.root_cause_detail.lower() or "LLM" in dev.root_cause_detail or "key" in dev.root_cause_detail.lower() or "skipped" in dev.root_cause_detail.lower() or "failed" in dev.root_cause_detail.lower() or "significant" in dev.root_cause_detail.lower()
+        detail_l = dev.root_cause_detail.lower()
+        assert (
+            "metrics" in detail_l
+            or "LLM" in dev.root_cause_detail
+            or any(k in detail_l for k in ("key", "skipped", "failed", "significant"))
+        )

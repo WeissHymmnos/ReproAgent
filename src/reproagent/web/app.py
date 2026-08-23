@@ -291,7 +291,12 @@ class WebApp:
         thread.start()
         return _json({"job_id": job_id, "status": "queued", "path": str(path)}, status=202)
 
-    def _run_reproduce_job(self, job_id: str, path: Path, backtest_kwargs: dict[str, Any] | None = None) -> None:
+    def _run_reproduce_job(
+        self,
+        job_id: str,
+        path: Path,
+        backtest_kwargs: dict[str, Any] | None = None,
+    ) -> None:
         with self._lock:
             self.jobs[job_id]["status"] = "running"
             self.jobs[job_id]["message"] = "pipeline running"
@@ -337,7 +342,7 @@ def make_handler_class(app: WebApp) -> type:
             # quieter default; still available via server logs if needed
             sys_stderr_write = getattr(self.server, "log_write", None)
             if callable(sys_stderr_write):
-                sys_stderr_write("%s - %s\n" % (self.address_string(), fmt % args))
+                sys_stderr_write(f"{self.address_string()} - {fmt % args}\n")
 
         def _dispatch(self) -> None:
             raw_len = self.headers.get("Content-Length") or "0"

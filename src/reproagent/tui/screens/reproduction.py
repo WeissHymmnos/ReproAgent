@@ -8,10 +8,9 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Input, Label, ProgressBar
 
+from reproagent.settings import get_settings
 from reproagent.tui.widgets.deviation_gauge import DeviationGauge
 from reproagent.tui.widgets.log_panel import LogPanel
-
-from reproagent.settings import get_settings
 
 
 def parse_stage_banner(settings: object) -> str:

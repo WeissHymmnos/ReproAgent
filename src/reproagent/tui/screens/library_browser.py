@@ -9,9 +9,8 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Button, Input, Label, Markdown, Static, Tree
 
-from reproagent.tui.widgets.factor_tree import FactorTree
-
 from reproagent.models.library import FactorLibraryEntry
+from reproagent.tui.widgets.factor_tree import FactorTree
 
 DEFAULT_TREE_LIMIT = 200
 

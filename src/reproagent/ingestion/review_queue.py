@@ -9,6 +9,7 @@ from reproagent.persistence.db import get_engine, init_db
 from reproagent.persistence.repository import Repository
 from reproagent.settings import get_settings
 
+
 def review_capability_kind(reason: str) -> str | None:
     """Bucket a review reason as a system-capability failure, or None if a human should review."""
     r = (reason or "").strip()

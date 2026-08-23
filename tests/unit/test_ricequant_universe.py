@@ -110,7 +110,8 @@ def test_load_ricequant_price_maps_columns() -> None:
 
 
 def test_unary_minus_formula() -> None:
-    from datetime import UTC, date as d, datetime
+    from datetime import UTC, datetime
+    from datetime import date as d
 
     from reproagent.models.factor_def import FactorDefinition
     from reproagent.models.replication import BacktestParams, ReplicationConfig

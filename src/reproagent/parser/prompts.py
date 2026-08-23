@@ -54,7 +54,8 @@ REFLECTION_PROMPT = Template(
 {% set dev = step.deviation_report %}
 - 偏差:
   - IC 均值偏差: {{ dev.metric_deviations.get("ic_mean", "N/A") if dev else "N/A" }}
-  - 多空年化收益偏差: {{ dev.metric_deviations.get("long_short_annual_return", "N/A") if dev else "N/A" }}
+{% set ls_dev = dev.metric_deviations.get("long_short_annual_return", "N/A") if dev else "N/A" %}
+  - 多空年化收益偏差: {{ ls_dev }}
   - 夏普偏差: {{ dev.metric_deviations.get("sharpe_ratio", "N/A") if dev else "N/A" }}
 - 根因分类: {{ dev.root_cause.value if dev else "N/A" }}
 - 详情: {{ dev.root_cause_detail if dev else "" }}

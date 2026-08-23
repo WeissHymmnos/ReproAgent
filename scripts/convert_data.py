@@ -1,8 +1,8 @@
-import os
 import glob
+from pathlib import Path
+
 import pandas as pd
 import polars as pl
-from pathlib import Path
 
 DATA_DIR = Path("/home/wh/Documents/Data/stocks_1m")
 OUTPUT_FILE = Path("/home/wh/Documents/Data/prices.parquet")

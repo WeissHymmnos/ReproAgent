@@ -43,7 +43,9 @@ def _settings(tmp_path: Path) -> Settings:
         return s
 
 
-def _seed_manager(tmp_path: Path, *, name: str = "momentum_ret") -> tuple[FactorLibraryManager, Repository, str]:
+def _seed_manager(
+    tmp_path: Path, *, name: str = "momentum_ret"
+) -> tuple[FactorLibraryManager, Repository, str]:
     db = tmp_path / "web.db"
     engine = get_engine(db)
     init_db(engine)

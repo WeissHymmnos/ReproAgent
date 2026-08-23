@@ -82,9 +82,9 @@ def test_missing_local_data_does_not_enqueue_review(tmp_path: Path) -> None:
     from pydantic import SecretStr
     from sqlmodel import Session, select
 
-    from reproagent.pipeline import reproduce_report
     from reproagent.persistence.db import get_engine, init_db
     from reproagent.persistence.tables import ManualReviewQueueTable
+    from reproagent.pipeline import reproduce_report
 
     empty = tmp_path / "no-prices"
     empty.mkdir()
@@ -182,9 +182,9 @@ def test_invalid_reproduce_does_not_duplicate_review(
 ) -> None:
     from sqlmodel import Session, select
 
-    from reproagent.pipeline import reproduce_report
     from reproagent.persistence.db import get_engine, init_db
     from reproagent.persistence.tables import ManualReviewQueueTable
+    from reproagent.pipeline import reproduce_report
 
     settings = _settings(tmp_path)
     junk = tmp_path / "x.csv"
@@ -670,7 +670,9 @@ def test_tui_reproduce_rejects_directory(tmp_path: Path) -> None:
 def test_tui_review_banner_does_not_invent_reflection() -> None:
     from reproagent.tui.screens.reproduction import review_enqueued_banner
 
-    text = review_enqueued_banner({"status": "review_enqueued", "reflection_status": "confidence_gate"})
+    text = review_enqueued_banner(
+        {"status": "review_enqueued", "reflection_status": "confidence_gate"}
+    )
     assert "confidence_gate" in text
     assert "Reflection" not in text
     assert "偏差过大" not in text
@@ -826,7 +828,9 @@ def test_placebo_pvalue_reads_p_value_field() -> None:
     assert placebo_pvalue_from_result(None) is None
 
 
-def test_library_grade_from_library_entry_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_library_grade_from_library_entry_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """score_factor(backtest_id=library_id) must use stored metrics, not a dummy C."""
     from reproagent.library.manager import FactorLibraryManager
     from reproagent.mcp_server import library_grade_impl
@@ -960,7 +964,9 @@ def test_benchmark_cb_factor_investing_passes_on_local_fixture(tmp_path: Path) -
     assert result["summary"]["passed"] == result["summary"]["total"] >= 1
 
 
-def test_benchmark_report_includes_last_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_benchmark_report_includes_last_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from typer.testing import CliRunner
 
     from reproagent.cli import app
@@ -1160,7 +1166,8 @@ def test_web_invalid_json_is_400_not_500(tmp_path: Path) -> None:
     assert "trace" not in payload
     resp2 = app.handle("POST", "/api/review/x", body=b"null")
     assert resp2.status == 400
-    assert "decision" in json.loads(resp2.body)["error"] or "JSON" in json.loads(resp2.body)["error"]
+    err2 = json.loads(resp2.body)["error"]
+    assert "decision" in err2 or "JSON" in err2
 
 
 def test_web_rejects_invalid_backtest_kwargs(tmp_path: Path) -> None:

@@ -7,7 +7,6 @@ from reproagent.models.factor_def import FactorDefinition
 from reproagent.models.factor_spec import ParsedFactorSpec
 from reproagent.models.memory import MechanismFamily
 
-
 _STYLE_TO_FAMILY: dict[str, MechanismFamily] = {
     "momentum": MechanismFamily.MOMENTUM,
     "value": MechanismFamily.VALUE,

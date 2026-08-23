@@ -371,7 +371,10 @@ def review(
     dismiss_capability: bool = typer.Option(
         False,
         "--dismiss-capability",
-        help="将系统能力失败（抽不出因子、数据源/wiki/公式引擎、反思耗尽等）标为 dismissed_capability，不 approve/reject",
+        help=(
+            "将系统能力失败（抽不出因子、数据源/wiki/公式引擎、反思耗尽等）"
+            "标为 dismissed_capability，不 approve/reject"
+        ),
     ),
     limit: int = typer.Option(50, "--limit", help="--list 最多打印条数"),
     stats: bool = typer.Option(False, "--stats", help="按原因分桶统计待审队列"),

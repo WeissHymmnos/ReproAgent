@@ -18,6 +18,7 @@ def _notify_catalog_library(entry: Any, backtest: Any) -> None:
         return
     try:
         from finaince.catalog.hooks import accept_library_entry
+
         from reproagent.reproducer.metrics import serialize_equity_returns
         from reproagent.reproducer.run_flags import snapshot_run_flags
     except ImportError:
@@ -557,7 +558,11 @@ def _data_context(settings: Settings, config: Any) -> dict[str, Any]:
     }
 
 
-def reproduce_report(pdf_path: Path, settings: Settings, backtest_kwargs: dict[str, Any] | None = None) -> dict | None:
+def reproduce_report(
+    pdf_path: Path,
+    settings: Settings,
+    backtest_kwargs: dict[str, Any] | None = None,
+) -> dict | None:
     path = Path(pdf_path)
     if path.suffix.lower() in {".md", ".txt"}:
         return reproduce_text(

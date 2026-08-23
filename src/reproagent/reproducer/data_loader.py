@@ -1064,8 +1064,8 @@ class DataLoader:
                         ["trade_date", "ts_code"]
                         + [c for c in pldf.columns if c not in ("trade_date", "ts_code")]
                     )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("tushare daily_basic load skipped: %s", exc)
 
         # fina_indicator → roe, roa, gp_margin, np_margin, debt_to_equity, etc.
         fina_fields: list[str] = []
@@ -1102,8 +1102,8 @@ class DataLoader:
                         ["trade_date", "ts_code"]
                         + [c for c in pldf.columns if c not in ("trade_date", "ts_code")]
                     )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("tushare fina_indicator load skipped: %s", exc)
 
         if not results:
             return pl.DataFrame(

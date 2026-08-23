@@ -99,7 +99,6 @@ def test_list_library_filter_style_and_broker(tmp_path: Path) -> None:
 
 
 def test_library_metrics_roundtrip_and_dashboard(tmp_path: Path) -> None:
-    from datetime import timedelta
 
     from reproagent.library.dashboard import (
         generate_html_dashboard,

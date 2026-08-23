@@ -10,6 +10,8 @@ import polars as pl
 from reproagent.deviation.analyzer import DeviationAnalyzer
 from reproagent.models.backtest import BacktestResult
 from reproagent.models.deviation import ToleranceConfig
+from reproagent.models.factor_def import FactorDefinition
+from reproagent.models.replication import BacktestParams, ReplicationConfig
 from reproagent.models.report import ReportedMetrics
 from reproagent.reproducer.health import (
     factor_values_are_usable,
@@ -17,8 +19,6 @@ from reproagent.reproducer.health import (
     metrics_are_non_degenerate,
 )
 from reproagent.reproducer.polars_engine import PolarsEngine
-from reproagent.models.factor_def import FactorDefinition
-from reproagent.models.replication import BacktestParams, ReplicationConfig
 
 
 def _usable_fv(path: Path, n: int = 40) -> Path:
