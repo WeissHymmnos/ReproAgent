@@ -60,8 +60,8 @@ def summarize_review_queue(pending: list[Any]) -> str:
     lines = [
         f"review: {len(pending)} pending ({human_n} human, {capability_n} capability)"
     ]
-    created = [getattr(row, "created_at", None) for row in pending]
-    created = [c for c in created if c]
+    created_all = [getattr(row, "created_at", None) for row in pending]
+    created = [c for c in created_all if c is not None]
     if created:
         lines.append(f"  oldest: {min(created)}")
         lines.append(f"  newest: {max(created)}")
@@ -471,7 +471,7 @@ def review(
         return
 
     if stats:
-        typer.echo(summarize_review_queue(pending))
+        typer.echo(summarize_review_queue(list(pending)))
         return
 
     if list_queue:
@@ -647,8 +647,8 @@ def benchmark(
         return
 
     if run_all:
-        ready = [r for r in reports if r.get("status") != "pending"]
-        if not ready:
+        ready_reports = [r for r in reports if r.get("status") != "pending"]
+        if not ready_reports:
             typer.echo("benchmark: all reports are pending (not yet annotated)")
             return
         try:
@@ -663,7 +663,7 @@ def benchmark(
             if local.exists():
                 settings = settings.model_copy(update={"local_data_path": local})
 
-        typer.echo(f"benchmark: running {len(ready)} report(s)")
+        typer.echo(f"benchmark: running {len(ready_reports)} report(s)")
         result = run_benchmark_all(settings, benchmark_dir=benchmark_dir)
         from reproagent.utils.jsonutil import dumps as json_dumps
 
@@ -673,21 +673,21 @@ def benchmark(
         return
 
     # 默认行为: 显示摘要
-    ready = [r for r in reports if r.get("status") != "pending"]
+    ready_list = [r for r in reports if r.get("status") != "pending"]
     typer.echo(
-        f"benchmark: {len(reports)} total, {ready} ready, "
-        f"{len(reports) - len(ready)} pending annotation"
+        f"benchmark: {len(reports)} total, {len(ready_list)} ready, "
+        f"{len(reports) - len(ready_list)} pending annotation"
     )
     typer.echo("Use --list to see all reports, --run REPORT_ID to execute")
 
 
 @app.command()
 def mcp() -> None:
-    """启动 MCP 服务器（供 Claude Code 等 AI Agent 调用）。"""
+    """启动 MCP 服务器，供支持 MCP 协议的客户端调用。"""
     try:
         from reproagent.mcp_server import build_mcp_server
 
-        server = build_mcp_server()
+        server: Any = build_mcp_server()
         server.run()
     except ImportError as e:
         typer.echo(f"MCP server unavailable: {e}", err=True)

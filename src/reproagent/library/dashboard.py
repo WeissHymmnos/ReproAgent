@@ -21,8 +21,8 @@ def normalize_dashboard_factor(raw: dict[str, Any] | None) -> dict[str, Any]:
     """Fill missing series/stats so dashboard JS never calls toFixed on undefined."""
     src = raw or {}
     stats_in = src.get("stats") or {}
-    ic_series = [ _as_float(v) for v in (src.get("ic_series") or []) ]
-    excess = [ _as_float(v) for v in (src.get("excess_cum") or []) ]
+    ic_series: list[float] = [ _as_float(v) for v in (src.get("ic_series") or []) ]
+    excess: list[float] = [ _as_float(v) for v in (src.get("excess_cum") or []) ]
     n = max(len(ic_series), len(excess))
     if len(ic_series) < n:
         ic_series = ic_series + [0.0] * (n - len(ic_series))
@@ -51,8 +51,10 @@ def library_dashboard_payload(entry: Any) -> dict[str, Any]:
     """Build a dashboard factor dict from a FactorLibraryEntry (incl. stored metrics)."""
     factor = entry.factor
     raw = dict(getattr(entry, "metrics", None) or {})
-    ic_series = raw.get("ic_series") if isinstance(raw.get("ic_series"), list) else []
-    excess = raw.get("excess_cum") if isinstance(raw.get("excess_cum"), list) else []
+    _raw_ic = raw.get("ic_series")
+    _raw_excess = raw.get("excess_cum")
+    ic_series: list[Any] = _raw_ic if isinstance(_raw_ic, list) else []
+    excess: list[Any] = _raw_excess if isinstance(_raw_excess, list) else []
     ann = _as_float(raw.get("ann_return"))
     mdd = _as_float(raw.get("max_drawdown"))
     return {

@@ -145,8 +145,10 @@ class StrategyBacktester:
 
             from reproagent.exceptions import ReproductionError
 
-            fv_std = fv_nn["factor_value"].std()
-            std_val = float(fv_std) if fv_std is not None else float("nan")
+            fv_std_raw = fv_nn["factor_value"].std()
+            std_val = (
+                float(fv_std_raw) if isinstance(fv_std_raw, (int, float)) else float("nan")
+            )
             if not math.isfinite(std_val) or abs(std_val) < 1e-12:
                 raise ReproductionError(
                     "Degenerate factor: zero cross-sectional variance in "

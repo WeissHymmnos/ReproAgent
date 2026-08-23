@@ -153,7 +153,8 @@ def validate_adjustment(df: pl.DataFrame) -> tuple[bool, str]:
 
     if "adj_factor" in df.columns:
         # 有权因子则直接检查
-        if df["adj_factor"].std() > 0:
+        af_std = df["adj_factor"].std()
+        if isinstance(af_std, (int, float)) and af_std > 0:
             return True, "检测到非恒定复权因子"
         return False, "复权因子恒为 1，可能未经复权调整"
 

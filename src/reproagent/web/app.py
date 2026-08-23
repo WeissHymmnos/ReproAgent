@@ -24,6 +24,14 @@ from reproagent.web.payloads import (
 from reproagent.web.workstation import get_index_html
 
 
+def _first_query(query: dict[str, list[str]], key: str) -> str | None:
+    """First value of a query param; missing/empty -> None."""
+    vals = query.get(key)
+    if not vals:
+        return None
+    return vals[0] if vals[0] != "" else None
+
+
 @dataclass
 class HttpResponse:
     status: int
@@ -163,15 +171,16 @@ class WebApp:
             if method == "GET" and route == "/api/summary":
                 return _json(build_summary(self.manager, self.repository))
             if method == "GET" and route == "/api/library":
-                style = (query.get("style") or [None])[0]
-                status = (query.get("status") or [None])[0]
-                q = (query.get("q") or query.get("query") or [None])[0]
-                parsed = _parse_limit((query.get("limit") or [None])[0], default=50)
-                if isinstance(parsed, HttpResponse):
-                    return parsed
+                style = _first_query(query, "style")
+                status = _first_query(query, "status")
+                q = _first_query(query, "q") or _first_query(query, "query")
+                limit_parsed = _parse_limit(_first_query(query, "limit"), default=50)
+                if isinstance(limit_parsed, HttpResponse):
+                    return limit_parsed
                 return _json(
                     build_library_list(
-                        self.manager, style=style, status=status, query=q, limit=parsed
+                        self.manager, style=style, status=status, query=q,
+                        limit=limit_parsed,
                     )
                 )
             if method == "GET" and route.startswith("/api/library/"):
@@ -181,10 +190,12 @@ class WebApp:
                     return _json({"error": "not found", "id": fid}, status=404)
                 return _json(detail)
             if method == "GET" and route == "/api/review":
-                parsed = _parse_limit((query.get("limit") or ["50"])[0], default=50)
-                if isinstance(parsed, HttpResponse):
-                    return parsed
-                return _json(build_review_list(self.repository, limit=parsed))
+                limit_parsed = _parse_limit(
+                    _first_query(query, "limit") or "50", default=50
+                )
+                if isinstance(limit_parsed, HttpResponse):
+                    return limit_parsed
+                return _json(build_review_list(self.repository, limit=limit_parsed))
             if method == "POST" and route.startswith("/api/review/"):
                 entry_id = route[len("/api/review/") :].strip("/")
                 return self._review_decide(entry_id, body)
@@ -434,5 +445,7 @@ def start_background_server(
     thread = threading.Thread(target=httpd.serve_forever, daemon=True, name="reproagent-web")
     thread.start()
     bound_host, bound_port = httpd.server_address[:2]
+    if isinstance(bound_host, bytes):
+        bound_host = bound_host.decode("utf-8", "replace")
     base = f"http://{bound_host}:{bound_port}"
     return httpd, base, web_app

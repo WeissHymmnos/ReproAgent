@@ -27,6 +27,12 @@ import polars as pl
 # ── 辅助函数 ──
 
 
+def _series_mean(series: pl.Series) -> float:
+    """polars 标量聚合的窄化：Series.mean() 返回宽联合类型。"""
+    v = series.mean()
+    return float(v) if isinstance(v, (int, float)) else 0.0
+
+
 def _phi(x: float) -> float:
     """标准正态 CDF。"""
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
@@ -375,7 +381,7 @@ def bootstrap_sharpe_ci(
         sharpe_ci_lower=ci_lower,
         sharpe_ci_upper=ci_upper,
         n_boot=n_boot,
-        significant=ci_lower > 0,
+        significant=bool(ci_lower > 0),
     )
 
 
@@ -447,9 +453,9 @@ def walk_forward_validation(
         )
 
         if len(train_ic) > 0:
-            ic_is_list.append(train_ic["ic"].mean())
+            ic_is_list.append(_series_mean(train_ic["ic"]))
         if len(oos_ic) > 0:
-            ic_oos_list.append(oos_ic["ic"].mean())
+            ic_oos_list.append(_series_mean(oos_ic["ic"]))
 
     ic_is_mean = float(np.mean(ic_is_list)) if ic_is_list else 0.0
     ic_is_std = float(np.std(ic_is_list)) if ic_is_list else 0.0
@@ -496,10 +502,13 @@ def subsample_stress_test(
     else:
         ref_col = returns_col
 
-    ref_mean = df[ref_col].mean()
-    ref_std = df[ref_col].std()
-    if ref_std is None or ref_std == 0:
-        ref_std = 0.01
+    ref_mean = _series_mean(df[ref_col])
+    ref_std_v = df[ref_col].std()
+    ref_std = (
+        float(ref_std_v)
+        if isinstance(ref_std_v, (int, float)) and ref_std_v != 0
+        else 0.01
+    )
 
     up_threshold = ref_mean + 2.0 * ref_std
     down_threshold = ref_mean - 2.0 * ref_std
@@ -522,11 +531,11 @@ def subsample_stress_test(
                 .agg(pl.corr("factor_value", returns_col, method="spearman").alias("ic"))
                 .drop_nulls("ic")
             )
-            regime_ics[name] = daily_ic["ic"].mean() if len(daily_ic) > 0 else 0.0
+            regime_ics[name] = _series_mean(daily_ic["ic"]) if len(daily_ic) > 0 else 0.0
         else:
             regime_ics[name] = 0.0
 
-    worst_regime = min(regime_ics, key=regime_ics.get) if regime_ics else ""
+    worst_regime = min(regime_ics, key=lambda k: regime_ics[k]) if regime_ics else ""
 
     ics = [v for v in regime_ics.values()]
     consistent = all(v > 0 for v in ics) or all(v < 0 for v in ics) if ics else True
@@ -568,7 +577,7 @@ def placebo_test(
         .agg(pl.corr("factor_value", "forward_return", method="spearman").alias("ic"))
         .drop_nulls("ic")
     )
-    true_ic = true_daily_ic["ic"].mean() if len(true_daily_ic) > 0 else 0.0
+    true_ic = _series_mean(true_daily_ic["ic"]) if len(true_daily_ic) > 0 else 0.0
 
     factor_vals = df["factor_value"].to_numpy()
     shuffled_ics: list[float] = []
@@ -583,7 +592,7 @@ def placebo_test(
             .drop_nulls("ic")
         )
         if len(s_daily_ic) > 0:
-            shuffled_ics.append(s_daily_ic["ic"].mean())
+            shuffled_ics.append(_series_mean(s_daily_ic["ic"]))
         else:
             shuffled_ics.append(0.0)
 

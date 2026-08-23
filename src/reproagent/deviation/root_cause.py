@@ -36,13 +36,13 @@ def _bootstrap_test_significance(deviation: DeviationReport, n_boot: int = 200) 
         return False
     values = list(deviation.metric_deviations.values())
     if len(values) < 2:
-        return abs(values[0]) > 0.02
+        return bool(abs(values[0]) > 0.02)
     mean_abs = np.mean([abs(v) for v in values])
     std_abs = np.std([abs(v) for v in values])
     if std_abs < 1e-10:
-        return mean_abs > 0.02
+        return bool(mean_abs > 0.02)
     t_stat = mean_abs / (std_abs / math.sqrt(len(values)))
-    return t_stat > 2.0
+    return bool(t_stat > 2.0)
 
 
 def classify_root_cause(

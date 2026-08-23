@@ -49,7 +49,7 @@ def placebo_pvalue_from_result(result: Any) -> float | None:
     if raw is None and isinstance(result, dict):
         raw = result.get("p_value", result.get("pvalue"))
     try:
-        value = float(raw)
+        value = float(raw)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
     if value != value or value in (float("inf"), float("-inf")):
@@ -134,7 +134,7 @@ def run_anti_overfitting_from_equity(equity_path: str | None) -> dict:
     except Exception as exc:  # noqa: BLE001
         return {**empty, "note": f"Failed to read equity: {exc}"}
 
-    ret_col = None
+    ret_col: str | None = None
     for c in ("ls_return", "ls_return_raw", "long_short", "ls", "daily_return"):
         if c in eq.columns:
             ret_col = c
@@ -148,7 +148,7 @@ def run_anti_overfitting_from_equity(equity_path: str | None) -> dict:
         ]
         if not numeric:
             return {**empty, "note": "No return columns in equity curve"}
-        ret_col = numeric[0]
+        ret_col = str(numeric[0])
 
     series = eq[ret_col].drop_nulls().to_numpy()
     if len(series) < 5:

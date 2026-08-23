@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -106,10 +107,13 @@ class LayoutExtractor:
         except ImportError:
             encrypted_cls = None
 
+        render_markdown: Callable[[Any], str] | None = None
         try:
-            from finreportparser.output.markdown import render_markdown
+            from finreportparser.output.markdown import render_markdown as _render_markdown
+
+            render_markdown = _render_markdown
         except ImportError:
-            render_markdown = None
+            pass
 
         overrides: dict = {
             "profile": getattr(self.settings, "finpdfpro_profile", None) or "balanced",

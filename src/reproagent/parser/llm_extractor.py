@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from typing import Any, cast
 
 from pydantic import BaseModel, Field
 
@@ -178,7 +179,7 @@ class LLMExtractor:
             envelope = client.chat.completions.create(
                 model=self.settings.llm_model,
                 response_model=FactorExtractionEnvelope,
-                messages=[{"role": "user", "content": content}],
+                messages=cast(Any, [{"role": "user", "content": content}]),
                 temperature=self.settings.llm_temperature,
                 seed=self.settings.llm_seed,
             )
@@ -200,7 +201,7 @@ class LLMExtractor:
                 model=self.settings.llm_model,
                 response_model=FactorExtractionEnvelope,
                 max_tokens=4096,
-                messages=[{"role": "user", "content": content}],
+                messages=cast(Any, [{"role": "user", "content": content}]),
                 temperature=self.settings.llm_temperature,
             )
 
@@ -276,7 +277,8 @@ class LLMExtractor:
             and (envelope.factors or dropped_proxy)
         ):
             mark_recovery_used("dev_domain_proxy")
-            base = (dropped_proxy or list(envelope.factors) or [None])[0]
+            candidates = dropped_proxy or list(envelope.factors or [])
+            base = candidates[0] if candidates else None
             if base is not None:
                 if not base.id:
                     base = base.model_copy(update={"id": uuid.uuid4().hex})

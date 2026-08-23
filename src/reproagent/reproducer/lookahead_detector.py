@@ -206,6 +206,7 @@ def _build_report(findings: list[LookaheadFinding]) -> LookaheadReport:
     has_error = any(f.severity == "error" for f in findings)
     has_warning = any(f.severity == "warning" for f in findings)
 
+    risk_level: Literal["none", "low", "medium", "high"]
     if has_error:
         risk_level = "high"
     elif has_warning and len(findings) >= 2:

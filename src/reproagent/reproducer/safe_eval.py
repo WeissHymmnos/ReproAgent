@@ -96,6 +96,7 @@ def safe_compile(
     mode: str = "eval",
 ) -> Any:
     """解析（如需要）、安全检查、编译表达式。"""
+    tree: ast.AST
     if isinstance(source, str):
         if len(source) > _MAX_SOURCE_CHARS:
             raise UnsafeExpressionError(
@@ -111,7 +112,7 @@ def safe_compile(
         )
     assert_safe_ast(tree)
     ast.fix_missing_locations(tree)
-    return compile(tree, filename=filename, mode=mode)
+    return compile(tree, filename=filename, mode=mode)  # type: ignore[call-overload]
 
 
 def safe_eval(

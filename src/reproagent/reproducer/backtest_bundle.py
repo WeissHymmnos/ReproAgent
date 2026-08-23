@@ -70,7 +70,8 @@ def build_backtest_bundle(
     )
     mean_factor = 0.0
     if len(fv) > 0 and "factor_value" in fv.columns:
-        mean_factor = float(fv["factor_value"].drop_nulls().mean() or 0.0)
+        _m = fv["factor_value"].drop_nulls().mean()
+        mean_factor = float(_m) if isinstance(_m, (int, float)) else 0.0
     return {
         "backtest_id": bt.id,
         "rows": len(fv),

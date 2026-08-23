@@ -14,8 +14,8 @@ class DecayStatus:
     factor_id: str
     original_ic: float  # 入库时的 IC
     current_ic: float  # 最近期的 IC
-    ic_drop_ratio: float  # (original - current) / original (正数 = 衰减)
     evaluation_date: date
+    ic_drop_ratio: float = 0.0  # (original - current) / original（正数 = 衰减；__post_init__ 重算）
     status: Literal["stable", "decaying", "deprecated"] = "stable"
 
     def __post_init__(self) -> None:

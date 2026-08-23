@@ -88,7 +88,7 @@ class ManualReviewScreen(Static):
             if count == 0:
                 return 0, "复核队列为空（0 项待审）", None
 
-            text = summarize_review_queue(pending) + "\n"
+            text = summarize_review_queue(list(pending)) + "\n"
             item = dequeue_manual_review(repo=repo)
             head_id: str | None = None
             if item is not None:

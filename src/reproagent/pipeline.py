@@ -448,7 +448,7 @@ def _try_soft_pass_after_reflection(
         return None
 
     cause = getattr(deviation, "root_cause", None)
-    cause_s = cause.value if hasattr(cause, "value") else str(cause or "")
+    cause_s = str(getattr(cause, "value", None) or cause or "")
     # lookahead 硬拦截
     if cause_s == "lookahead_bias":
         return None
@@ -628,8 +628,8 @@ def reproduce_report(
     parser = ReportParser(settings)
     cached_data = cache_manager.get_cached(cache_key)
     markdown = ""
-    use_parse_cache = bool(cached_data) and bool(settings.formula_fallback_allowed)
-    if use_parse_cache:
+    use_parse_cache = cached_data is not None and bool(settings.formula_fallback_allowed)
+    if use_parse_cache and cached_data is not None:
         markdown, specs, config = cached_data
         from reproagent.parser.config_builder import apply_backtest_kwargs
 
@@ -897,8 +897,8 @@ def reproduce_text(
     parser = ReportParser(settings)
     cached_data = cache_manager.get_cached(cache_key)
     markdown = text
-    use_parse_cache = bool(cached_data) and bool(settings.formula_fallback_allowed)
-    if use_parse_cache:
+    use_parse_cache = cached_data is not None and bool(settings.formula_fallback_allowed)
+    if use_parse_cache and cached_data is not None:
         _, specs, config = cached_data
         from reproagent.parser.config_builder import apply_backtest_kwargs
 

@@ -181,8 +181,11 @@ class ReflectionLoopController:
             try:
                 spec0 = state.original_config.factor_specs[0]
                 fields = [f.name for f in (spec0.input_fields or [])]
-                experience_context = self.experience_memory.build_reflection_context(
-                    spec0.formula, fields
+                build_ctx = getattr(
+                    self.experience_memory, "build_reflection_context", None
+                )
+                experience_context = (
+                    build_ctx(spec0.formula, fields) if callable(build_ctx) else ""
                 )
             except Exception:  # noqa: BLE001
                 experience_context = ""
