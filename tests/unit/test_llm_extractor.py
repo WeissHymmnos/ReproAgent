@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -72,10 +73,14 @@ def test_revise_without_api_key_returns_modified_spec() -> None:
 def test_extract_does_not_call_real_llm(monkeypatch: pytest.MonkeyPatch) -> None:
     ex = LLMExtractor(_settings_no_key())
 
-    def _fail_import(*args, **kwargs):
-        raise AssertionError("real LLM client should not be imported without api key")
+    real_import = builtins.__import__
 
-    monkeypatch.setattr("builtins.__import__", _fail_import)
+    def _fail_import(name, *args, **kwargs):
+        if name.split(".")[0] in {"openai", "anthropic", "instructor"}:
+            raise AssertionError("real LLM client should not be imported without api key")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fail_import)
     specs = ex.extract(_report(), "# md")
     assert len(specs) >= 1
 
