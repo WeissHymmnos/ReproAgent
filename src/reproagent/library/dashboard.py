@@ -4,6 +4,80 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return default
+    if out != out or out in (float("inf"), float("-inf")):
+        return default
+    return out
+
+
+def normalize_dashboard_factor(raw: dict[str, Any] | None) -> dict[str, Any]:
+    """Fill missing series/stats so dashboard JS never calls toFixed on undefined."""
+    src = raw or {}
+    stats_in = src.get("stats") or {}
+    ic_series = [ _as_float(v) for v in (src.get("ic_series") or []) ]
+    excess = [ _as_float(v) for v in (src.get("excess_cum") or []) ]
+    n = max(len(ic_series), len(excess))
+    if len(ic_series) < n:
+        ic_series = ic_series + [0.0] * (n - len(ic_series))
+    if len(excess) < n:
+        excess = excess + [0.0] * (n - len(excess))
+    return {
+        "name": str(src.get("name") or ""),
+        "name_cn": str(src.get("name_cn") or src.get("name") or ""),
+        "style": str(src.get("style") or "other"),
+        "formula": str(src.get("formula") or ""),
+        "status": str(src.get("status") or ""),
+        "ic_series": ic_series,
+        "excess_cum": excess,
+        "stats": {
+            "ic": _as_float(stats_in.get("ic")),
+            "icir": _as_float(stats_in.get("icir")),
+            "ann_return": _as_float(stats_in.get("ann_return")),
+            "max_drawdown": _as_float(stats_in.get("max_drawdown")),
+            "win_rate": _as_float(stats_in.get("win_rate")),
+            "std": _as_float(stats_in.get("std")),
+        },
+    }
+
+
+def library_dashboard_payload(entry: Any) -> dict[str, Any]:
+    """Build a dashboard factor dict from a FactorLibraryEntry (incl. stored metrics)."""
+    factor = entry.factor
+    raw = dict(getattr(entry, "metrics", None) or {})
+    ic_series = raw.get("ic_series") if isinstance(raw.get("ic_series"), list) else []
+    excess = raw.get("excess_cum") if isinstance(raw.get("excess_cum"), list) else []
+    ann = _as_float(raw.get("ann_return"))
+    mdd = _as_float(raw.get("max_drawdown"))
+    return {
+        "name": factor.name,
+        "name_cn": getattr(factor, "name_cn", None) or factor.name,
+        "style": str(getattr(factor, "style", "") or "other"),
+        "formula": getattr(factor, "formula", "") or "",
+        "status": getattr(entry, "status", "") or "",
+        "ic_series": [_as_float(v) for v in ic_series],
+        "excess_cum": [_as_float(v) for v in excess],
+        "stats": {
+            "ic": _as_float(raw.get("ic")),
+            "icir": _as_float(raw.get("icir")),
+            "ann_return": ann * 100.0,
+            "max_drawdown": mdd * 100.0,
+            "win_rate": _as_float(raw.get("win_rate")),
+            "std": _as_float(raw.get("std")),
+        },
+    }
+
+
+def write_library_dashboard(entries: list[Any], output_path: Path) -> Path:
+    """Serialize library entries (with stored metrics) to dashboard.html."""
+    payload = [library_dashboard_payload(entry) for entry in (entries or [])]
+    return generate_html_dashboard(payload, output_path)
 
 
 def generate_html_dashboard(
@@ -20,8 +94,9 @@ def generate_html_dashboard(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    factors_json = json.dumps(factors, ensure_ascii=False)
-    count = len(factors)
+    normalized = [normalize_dashboard_factor(f) for f in (factors or [])]
+    factors_json = json.dumps(normalized, ensure_ascii=False)
+    count = len(normalized)
 
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -194,12 +269,27 @@ body {{
 <script>
 const FACTORS = {factors_json};
 
+function num(x, d) {{ const v = Number(x); return Number.isFinite(v) ? v : (d || 0); }}
+function statsOf(f) {{
+  const s = (f && f.stats) || {{}};
+  return {{
+    ic: num(s.ic), icir: num(s.icir), ann_return: num(s.ann_return),
+    max_drawdown: num(s.max_drawdown), win_rate: num(s.win_rate), std: num(s.std)
+  }};
+}}
+function esc(s) {{
+  return String(s ?? "").replace(/[&<>"']/g, c => ({{
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  }}[c]));
+}}
+
 function renderCard(f, i) {{
-  const s = f.stats;
+  const s = statsOf(f);
   const icColor = s.ic > 0 ? 'green' : 'red';
   const retColor = s.ann_return > 0 ? 'green' : 'red';
   return `<div class="card" onclick="openModal(${{i}})">
-    <div class="name">${{f.name}}</div>
+    <div class="name">${{esc(f.name_cn || f.name)}}</div>
+    <div class="mini">${{esc(f.style || "")}} · ${{esc(f.status || "")}}</div>
     <div class="stat-row"><span class="label">IC</span><span class="value ${{icColor}}">${{s.ic > 0 ? '+' : ''}}${{s.ic.toFixed(4)}}</span></div>
     <div class="stat-row"><span class="label">ICIR</span><span class="value blue">${{s.icir.toFixed(2)}}</span></div>
     <div class="stat-row"><span class="label">年化收益</span><span class="value ${{retColor}}">${{s.ann_return > 0 ? '+' : ''}}${{s.ann_return.toFixed(1)}}%</span></div>
@@ -212,7 +302,8 @@ function filterCards() {{
   const grid = document.getElementById('factorGrid');
   let visible = 0;
   for (const [i, f] of FACTORS.entries()) {{
-    const show = !q || f.name.includes(q);
+    const hay = `${{f.name_cn || ""}} ${{f.name || ""}} ${{f.formula || ""}} ${{f.style || ""}}`.toLowerCase();
+    const show = !q || hay.includes(q);
     grid.children[i].style.display = show ? '' : 'none';
     if (show) visible++;
   }}
@@ -223,7 +314,7 @@ let charts = {{}};
 
 function openModal(idx) {{
   const f = FACTORS[idx];
-  const s = f.stats;
+  const s = statsOf(f);
   document.getElementById('modalName').textContent = f.name;
   document.getElementById('modalSubtitle').textContent = `因子库 @ DB  · 第 ${{idx + 1}} / ${{FACTORS.length}} 个`;
   document.getElementById('modalKpis').innerHTML = `
@@ -233,9 +324,14 @@ function openModal(idx) {{
     <div class="kpi"><div class="kpi-label">最大回撤</div><div class="kpi-value red">${{s.max_drawdown.toFixed(1)}}%</div></div>
     <div class="kpi"><div class="kpi-label">IC 标准差</div><div class="kpi-value blue">${{s.std.toFixed(4)}}</div></div>
     <div class="kpi"><div class="kpi-label">胜率</div><div class="kpi-value green">${{s.win_rate.toFixed(0)}}%</div></div>`;
-  Object.values(charts).forEach(c => c.destroy());
+  Object.values(charts).forEach(c => {{ if (c && c.destroy) c.destroy(); }});
   charts = {{}};
   const labels = f.ic_series.map((_, i) => `T${{i + 1}}`);
+  if (typeof Chart !== "function") {{
+    const note = "离线未加载 Chart.js，曲线图不可用；下方表格仍可看。";
+    document.getElementById("tabIc").innerHTML = `<p class="muted">${{note}}</p>`;
+    document.getElementById("tabExcess").innerHTML = `<p class="muted">${{note}}</p>`;
+  }} else {{
   charts.ic = new Chart(document.getElementById('icChart'), {{
     type:'line',
     data:{{
@@ -270,6 +366,7 @@ function openModal(idx) {{
       scales:{{x:{{display:false}},y:{{grid:{{color:'rgba(255,255,255,.04)'}},ticks:{{color:'#6b7599'}}}}}}
     }}
   }});
+  }}
   document.getElementById('dataTable').innerHTML = `
     <thead><tr><th>日期</th><th>IC</th><th>累计超额复权</th></tr></thead>
     <tbody>${{f.ic_series.map((v,i)=>`<tr><td>T${{i+1}}</td><td>${{v.toFixed(6)}}</td><td>${{f.excess_cum[i].toFixed(2)}}</td></tr>`).join('')}}</tbody>`;
@@ -278,7 +375,7 @@ function openModal(idx) {{
 
 function closeModal() {{
   document.getElementById('modalOverlay').classList.remove('active');
-  Object.values(charts).forEach(c => c.destroy());
+  Object.values(charts).forEach(c => {{ if (c && c.destroy) c.destroy(); }});
   charts = {{}};
 }}
 

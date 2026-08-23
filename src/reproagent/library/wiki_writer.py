@@ -42,15 +42,26 @@ class WikiWriter:
             f"- **去重哈希**: `{entry.dedup_hash}`",
             f"- **创建时间**: {entry.created_at:%Y-%m-%d %H:%M}",
             "",
-            "## 公式",
-            "",
-            "```",
-            f.formula,
-            "```",
-            "",
-            "## 输入字段",
-            "",
         ]
+        metrics = getattr(entry, "metrics", None) or {}
+        if metrics:
+            lines.extend(["## 回测指标", ""])
+            for key in ("ic", "icir", "ann_return", "max_drawdown", "sharpe", "turnover"):
+                if key in metrics and not isinstance(metrics[key], list):
+                    lines.append(f"- **{key}**: {metrics[key]}")
+            lines.append("")
+        lines.extend(
+            [
+                "## 公式",
+                "",
+                "```",
+                f.formula,
+                "```",
+                "",
+                "## 输入字段",
+                "",
+            ]
+        )
         for inp in f.input_fields:
             lines.append(f"- {inp}")
         lines.extend(

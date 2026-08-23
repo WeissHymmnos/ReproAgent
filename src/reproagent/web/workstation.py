@@ -185,11 +185,65 @@ button, input, textarea, select { font: inherit; color: inherit; }
           <label for="repro-path">报告路径</label>
           <input id="repro-path" type="text" placeholder="/path/to/report.pdf 或 .md" />
         </div>
-        <div class="toolbar">
+        <div class="field" style="margin-top: 12px;">
+          <label for="repro-mode">回测模式</label>
+          <select id="repro-mode" style="padding: 6px; border-radius: 4px; background: var(--ctp-surface1); border: 1px solid var(--ctp-surface2);">
+            <option value="factor">因子模式 (默认分组回测)</option>
+            <option value="strategy">策略模式 (按规则生成持仓)</option>
+          </select>
+        </div>
+        <div id="strategy-options" style="display: none; margin-top: 12px; background: var(--ctp-surface0); padding: 12px; border-radius: 8px;">
+          <div class="field" style="margin-bottom: 8px;">
+            <label>策略类型</label>
+            <select id="repro-strategy-mode" style="padding: 4px;">
+              <option value="cross_sectional">截面 (Cross Sectional)</option>
+              <option value="time_series">时序 (Time Series)</option>
+            </select>
+          </div>
+          <div class="field" style="margin-bottom: 8px;">
+            <label>方向</label>
+            <select id="repro-direction" style="padding: 4px;">
+              <option value="long_short">多空 (Long-Short)</option>
+              <option value="long_only">做多 (Long-Only)</option>
+              <option value="long_flat">做多平仓 (Long-Flat)</option>
+            </select>
+          </div>
+          <div class="field" style="margin-bottom: 8px;">
+            <label>选股规则</label>
+            <select id="repro-selection" style="padding: 4px;">
+              <option value="top_bottom_n">Top/Bottom N</option>
+              <option value="top_n">Top N</option>
+              <option value="bottom_n">Bottom N</option>
+              <option value="threshold">阈值 (Threshold)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>N (若选Top/Bottom)</label>
+            <input id="repro-param-n" type="number" placeholder="10" value="10" style="padding: 4px;" />
+          </div>
+          <div class="field" style="margin-top: 8px;">
+            <label>多头阈值 (若选Threshold)</label>
+            <input id="repro-param-long-th" type="number" step="0.1" placeholder="0.75" style="padding: 4px;" />
+          </div>
+          <div class="field" style="margin-top: 8px;">
+            <label>空头阈值 (若选Threshold)</label>
+            <input id="repro-param-short-th" type="number" step="0.1" placeholder="-0.75" style="padding: 4px;" />
+          </div>
+          <div class="field" style="margin-top: 8px;">
+            <label>最短持有天数</label>
+            <input id="repro-param-min-hold" type="number" min="1" value="1" style="padding: 4px;" />
+          </div>
+          <div class="field" style="margin-top: 8px;">
+            <label>退出阈值 (可选)</label>
+            <input id="repro-param-exit-th" type="number" step="0.1" placeholder="空=按信号离场" style="padding: 4px;" />
+          </div>
+        </div>
+        <div class="toolbar" style="margin-top: 16px;">
           <button type="button" class="btn primary" id="repro-submit">提交复现</button>
           <button type="button" class="btn" id="repro-refresh">刷新任务</button>
         </div>
         <div class="status-line" id="repro-status">尚未提交任务</div>
+        <div class="muted" id="repro-jobs">内存任务列表未加载</div>
         <div class="log" id="repro-log"></div>
       </div>
     </section>
@@ -198,8 +252,11 @@ button, input, textarea, select { font: inherit; color: inherit; }
 <script>
 const state = {
   library: [],
+  libTotal: 0,
+  libStyles: [],
   selectedLib: null,
   reviews: [],
+  reviewTotal: null,
   selectedRev: null,
   jobId: null,
   pollTimer: null,
@@ -223,6 +280,7 @@ function showView(name) {
   document.querySelectorAll(".nav-link").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.view === name);
   });
+  if (name === "reproduce") loadJobs().catch(() => {});
 }
 
 document.querySelectorAll(".nav-link").forEach(btn => {
@@ -237,20 +295,10 @@ function statusPill(status) {
 }
 
 function renderLibrary() {
-  const q = (document.getElementById("lib-search").value || "").trim().toLowerCase();
-  const style = document.getElementById("lib-style").value;
-  let items = state.library.slice();
-  if (style) items = items.filter(x => x.style === style);
-  if (q) {
-    items = items.filter(x =>
-      (x.name || "").toLowerCase().includes(q) ||
-      (x.name_cn || "").toLowerCase().includes(q) ||
-      (x.formula || "").toLowerCase().includes(q)
-    );
-  }
+  const items = state.library.slice();
   const list = document.getElementById("lib-list");
   if (!items.length) {
-    list.innerHTML = `<div class="empty">${state.library.length ? "无匹配结果" : "因子库为空 — 请先用 CLI 复现并入库"}</div>`;
+    list.innerHTML = `<div class="empty">${state.libTotal ? "无匹配结果" : "因子库为空 — 请先用 CLI 复现并入库"}</div>`;
   } else {
     list.innerHTML = items.map(it => `
       <div class="card ${state.selectedLib === it.id ? "active" : ""}" data-id="${it.id}">
@@ -265,19 +313,22 @@ function renderLibrary() {
       card.addEventListener("click", () => selectLibrary(card.dataset.id));
     });
   }
-  const styles = [...new Set(state.library.map(x => x.style).filter(Boolean))].sort();
+  const styles = (state.libStyles && state.libStyles.length)
+    ? state.libStyles
+    : [...new Set(state.library.map(x => x.style).filter(Boolean))].sort();
   const sel = document.getElementById("lib-style");
   const cur = sel.value;
   sel.innerHTML = `<option value="">全部风格</option>` + styles.map(s =>
     `<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`).join("");
   if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
 
+  const total = state.libTotal || items.length;
   const kpis = document.getElementById("lib-kpis");
   kpis.innerHTML = `
-    <div class="kpi"><div class="label">因子总数</div><div class="value">${state.library.length}</div></div>
+    <div class="kpi"><div class="label">因子总数</div><div class="value">${total}</div></div>
     <div class="kpi"><div class="label">风格数</div><div class="value">${styles.length}</div></div>
     <div class="kpi"><div class="label">筛选后</div><div class="value">${items.length}</div></div>`;
-  document.getElementById("lib-badge").textContent = String(state.library.length);
+  document.getElementById("lib-badge").textContent = String(total);
 }
 
 function selectLibrary(id) {
@@ -296,6 +347,12 @@ function selectLibrary(id) {
       <span class="pill">v${escapeHtml(it.version)}</span>
     </div>
     <p class="muted">英文名：${escapeHtml(it.name)}</p>
+    ${it.metrics && (it.metrics.ic != null || it.metrics.sharpe != null) ? `
+    <div class="kpis" style="margin:12px 0">
+      <div class="kpi"><div class="label">IC</div><div class="value">${Number(it.metrics.ic || 0).toFixed(3)}</div></div>
+      <div class="kpi"><div class="label">Sharpe</div><div class="value">${Number(it.metrics.sharpe || 0).toFixed(2)}</div></div>
+      <div class="kpi"><div class="label">年化</div><div class="value">${(Number(it.metrics.ann_return || 0)*100).toFixed(1)}%</div></div>
+    </div>` : ""}
     <h3>公式</h3>
     <pre class="mono">${escapeHtml(it.formula || "")}</pre>
     <h3>字段</h3>
@@ -312,8 +369,19 @@ created_at: ${escapeHtml(it.created_at || "")}</pre>`;
 }
 
 async function loadLibrary() {
-  const data = await api("/api/library");
+  const q = (document.getElementById("lib-search").value || "").trim();
+  const style = document.getElementById("lib-style").value;
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (style) params.set("style", style);
+  params.set("limit", "100");
+  const [data, summary] = await Promise.all([
+    api("/api/library?" + params.toString()),
+    api("/api/summary"),
+  ]);
   state.library = data.items || [];
+  state.libTotal = summary.library_count || 0;
+  state.libStyles = Object.keys(summary.styles || {}).sort();
   renderLibrary();
   if (state.selectedLib) selectLibrary(state.selectedLib);
 }
@@ -321,8 +389,10 @@ async function loadLibrary() {
 function renderReviews() {
   const list = document.getElementById("rev-list");
   const items = state.reviews;
-  document.getElementById("rev-status").textContent = items.length
-    ? `待审 ${items.length} 项` : "队列为空";
+  const total = state.reviewTotal != null ? state.reviewTotal : items.length;
+  document.getElementById("rev-status").textContent = total
+    ? `待审 ${items.length}${total > items.length ? " / " + total : ""} 项`
+    : "队列为空";
   if (!items.length) {
     list.innerHTML = `<div class="empty">复核队列为空</div>`;
     document.getElementById("rev-detail").innerHTML = `<div class="empty">无待审项</div>`;
@@ -368,8 +438,9 @@ created_at: ${escapeHtml(it.created_at || "")}</pre>
 }
 
 async function loadReviews() {
-  const data = await api("/api/review");
+  const data = await api("/api/review?limit=50");
   state.reviews = data.items || [];
+  state.reviewTotal = data.total;
   if (state.selectedRev && !state.reviews.some(x => x.entry_id === state.selectedRev)) {
     state.selectedRev = null;
   }
@@ -395,16 +466,40 @@ async function submitReproduce() {
     status.innerHTML = `<span class="error">请填写报告路径</span>`;
     return;
   }
+  
+  const mode = document.getElementById("repro-mode").value;
+  let backtest_kwargs = { mode: mode };
+  if (mode === "strategy") {
+    backtest_kwargs.strategy_mode = document.getElementById("repro-strategy-mode").value;
+    backtest_kwargs.direction = document.getElementById("repro-direction").value;
+    backtest_kwargs.selection_rule = document.getElementById("repro-selection").value;
+    
+    const n = parseInt(document.getElementById("repro-param-n").value);
+    if (!isNaN(n)) {
+      backtest_kwargs.top_n = n;
+      backtest_kwargs.bottom_n = n;
+    }
+    const longTh = parseFloat(document.getElementById("repro-param-long-th").value);
+    if (!isNaN(longTh)) backtest_kwargs.long_threshold = longTh;
+    const shortTh = parseFloat(document.getElementById("repro-param-short-th").value);
+    if (!isNaN(shortTh)) backtest_kwargs.short_threshold = shortTh;
+    const minHold = parseInt(document.getElementById("repro-param-min-hold").value, 10);
+    if (!isNaN(minHold) && minHold >= 1) backtest_kwargs.min_holding_days = minHold;
+    const exitTh = parseFloat(document.getElementById("repro-param-exit-th").value);
+    if (!isNaN(exitTh)) backtest_kwargs.exit_threshold = exitTh;
+  }
+
   status.textContent = "提交中…";
   log.textContent = "";
   try {
     const data = await api("/api/reproduce", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({ path: path, backtest_kwargs: backtest_kwargs }),
     });
     state.jobId = data.job_id;
     status.textContent = `任务已创建：${data.job_id}（${data.status}）`;
+    loadJobs().catch(() => {});
     pollJob();
   } catch (e) {
     status.innerHTML = `<span class="error">${escapeHtml(e.message)}</span>`;
@@ -429,10 +524,32 @@ async function pollJob() {
     } catch (e) {
       document.getElementById("repro-status").innerHTML =
         `<span class="error">${escapeHtml(e.message)}</span>`;
+      const msg = String(e && e.message || "");
+      if (msg.includes("not found") || msg.includes("404")) {
+        clearInterval(state.pollTimer);
+        state.pollTimer = null;
+      }
     }
   };
   await tick();
   state.pollTimer = setInterval(tick, 1500);
+}
+
+async function loadJobs() {
+  const el = document.getElementById("repro-jobs");
+  try {
+    const data = await api("/api/jobs");
+    const items = data.items || [];
+    if (!items.length) {
+      el.textContent = "内存中无任务（刷新页面会清空）";
+      return;
+    }
+    el.innerHTML = items.map(j =>
+      `<div><code>${escapeHtml(j.job_id)}</code> · ${escapeHtml(j.status)} · ${escapeHtml(j.message || "")}</div>`
+    ).join("");
+  } catch (e) {
+    el.innerHTML = `<span class="error">${escapeHtml(e.message)}</span>`;
+  }
 }
 
 function formatJob(data) {
@@ -456,12 +573,21 @@ function escapeHtml(s) {
 function escapeAttr(s) { return escapeHtml(s).replace(/`/g, ""); }
 
 document.getElementById("lib-refresh").onclick = () => loadLibrary().catch(showErr);
-document.getElementById("lib-search").oninput = renderLibrary;
-document.getElementById("lib-style").onchange = renderLibrary;
+let _libSearchTimer = null;
+document.getElementById("lib-search").oninput = () => {
+  clearTimeout(_libSearchTimer);
+  _libSearchTimer = setTimeout(() => loadLibrary().catch(showErr), 200);
+};
+document.getElementById("lib-style").onchange = () => loadLibrary().catch(showErr);
 document.getElementById("rev-refresh").onclick = () => loadReviews().catch(showErr);
 document.getElementById("repro-submit").onclick = submitReproduce;
 document.getElementById("repro-refresh").onclick = () => {
+  loadJobs().catch(showErr);
   if (state.jobId) pollJob();
+};
+document.getElementById("repro-mode").onchange = (e) => {
+  const isStrategy = e.target.value === "strategy";
+  document.getElementById("strategy-options").style.display = isStrategy ? "block" : "none";
 };
 
 function showErr(e) {

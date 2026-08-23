@@ -38,6 +38,8 @@ class FactorLibraryManager:
         if existing is not None:
             entry.version = bump(existing.version, "patch")
             entry.id = existing.id
+            if not (entry.metrics or {}) and (existing.metrics or {}):
+                entry.metrics = existing.metrics
         # 冗余检查（仅对新因子）
         if check_redundancy and existing is None:
             # 简化：仅基于元数据层面的冗余检查（formula+fields）
@@ -116,11 +118,58 @@ class FactorLibraryManager:
     def get(self, factor_id: str) -> FactorLibraryEntry | None:
         return self.repository.get_library_entry(factor_id)
 
+    def backfill_metrics(self, data_dir: Path) -> int:
+        """Fill empty ``entry.metrics`` from ``data_dir/backtest/<name>/`` artifacts."""
+        from pathlib import Path as _Path
+
+        from reproagent.reproducer.metrics import (
+            find_backtest_artifact_dir,
+            metrics_from_artifact_dir,
+        )
+
+        updated = 0
+        for entry in self.list():
+            current = entry.metrics or {}
+            if current.get("ic_series") or current.get("ic"):
+                continue
+            folder = find_backtest_artifact_dir(_Path(data_dir), entry)
+            if folder is None:
+                continue
+            entry.metrics = metrics_from_artifact_dir(folder)
+            self.repository.save_library_entry(entry)
+            self.wiki_writer.write_entry(entry)
+            updated += 1
+        if updated:
+            self.update_index()
+        return updated
+
     def list(  # noqa: A003
         self,
         filter: LibraryFilter | None = None,  # noqa: A002
+        *,
+        query: str | None = None,
+        limit: int | None = None,
     ) -> list[FactorLibraryEntry]:
-        return self.repository.list_library_entries(filter)
+        entries = self.repository.list_library_entries(filter)
+        q = (query or "").strip().lower()
+        if q:
+            kept: list[FactorLibraryEntry] = []
+            for entry in entries:
+                f = entry.factor
+                hay = " ".join(
+                    [
+                        f.name or "",
+                        f.name_cn or "",
+                        f.formula or "",
+                        " ".join(f.input_fields or []),
+                    ]
+                ).lower()
+                if q in hay:
+                    kept.append(entry)
+            entries = kept
+        if limit is not None and limit >= 0:
+            entries = entries[:limit]
+        return entries
 
     def dedup_check(self, entry: FactorLibraryEntry) -> FactorLibraryEntry | None:
         return self.repository.get_by_dedup_hash(entry.dedup_hash)

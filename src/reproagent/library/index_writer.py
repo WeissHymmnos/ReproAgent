@@ -22,13 +22,16 @@ class IndexWriter:
             "",
             f"共 {len(sorted_entries)} 个因子。",
             "",
-            "| 因子 | 风格 | 版本 | 状态 | 去重哈希 | 创建时间 |",
-            "|------|------|------|------|----------|----------|",
+            "| 因子 | 风格 | IC | 版本 | 状态 | 去重哈希 | 创建时间 |",
+            "|------|------|----|------|------|----------|----------|",
         ]
         for e in sorted_entries:
+            metrics = getattr(e, "metrics", None) or {}
+            ic = metrics.get("ic")
+            ic_s = f"{float(ic):.3f}" if isinstance(ic, (int, float)) else "—"
             lines.append(
                 f"| [{e.factor.name_cn}](factors/{safe_factor_filename(e.factor.name)}.md) "
-                f"| {e.factor.style} | {e.version} | {e.status} "
+                f"| {e.factor.style} | {ic_s} | {e.version} | {e.status} "
                 f"| {e.dedup_hash[:8]} | {e.created_at:%Y-%m-%d %H:%M} |"
             )
         lines.append("")

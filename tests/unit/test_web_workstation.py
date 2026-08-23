@@ -122,6 +122,7 @@ def test_build_library_list_and_detail_seeded(tmp_path: Path) -> None:
     assert detail is not None
     assert detail["name"] == "seed_alpha"
     assert detail["id"] == entry_id
+    assert "metrics" in detail
 
     missing = build_library_detail(manager, "does-not-exist")
     assert missing is None
@@ -145,6 +146,7 @@ def test_build_review_list_seeded(tmp_path: Path) -> None:
     summary = build_summary(manager, repo)
     assert summary["library_count"] == 1
     assert summary["review_pending"] == 1
+    assert summary["styles"]
 
 
 def test_index_html_has_reproagent_sections() -> None:
@@ -154,6 +156,18 @@ def test_index_html_has_reproagent_sections() -> None:
     assert "人工复核" in html
     assert "研报复现" in html
     assert "/api/library" in html
+    assert "/api/summary" in html
+    assert "it.metrics" in html
+    assert 'msg.includes("not found")' in html
+    assert 'api("/api/jobs")' in html
+    assert "repro-jobs" in html
+    assert 'name === "reproduce"' in html
+    assert 'params.set("q"' in html
+    assert "setTimeout" in html
+    assert "repro-param-min-hold" in html
+    assert "repro-param-exit-th" in html
+    assert "min_holding_days" in html
+    assert "/api/review?limit=50" in html
     assert "Swarm Runs" not in html
     assert "Alpha Pool" not in html
 
@@ -204,6 +218,79 @@ def test_webapp_handle_library_and_review(tmp_path: Path, monkeypatch: pytest.Mo
     assert decide.status == 200
     after = json.loads(app.handle("GET", "/api/review").body)
     assert after["count"] == 0
+    assert after.get("total", 0) == 0
+
+
+def test_web_library_query_and_limit(tmp_path: Path) -> None:
+    manager, repo, _ = _seed_manager(tmp_path, name="alpha_mom")
+    extra = FactorDefinition(
+        id="id-beta_val",
+        spec_id="spec-beta_val",
+        name="beta_val",
+        name_cn="价值样例",
+        style="value",
+        formula="1/close",
+        input_fields=["close"],
+        universe="all",
+        rebalance_frequency="monthly",
+    )
+    manager.register(
+        FactorLibraryEntry(
+            id="entry-beta_val",
+            factor=extra,
+            report_id="rep-web-1",
+            config_id="cfg2",
+            backtest_result_id="bt2",
+            deviation_passed=True,
+            status="ready",
+            version="0.1.0",
+            dedup_hash="",
+            tags=["web-test"],
+            created_at=datetime.now(UTC),
+            metrics={"ic": 0.15, "sharpe": 1.25, "ann_return": 0.2},
+        )
+    )
+    settings = _settings(tmp_path)
+    app = WebApp(settings=settings, repository=repo, manager=manager)
+    all_items = json.loads(app.handle("GET", "/api/library").body)
+    assert all_items["count"] == 2
+    q = json.loads(app.handle("GET", "/api/library?q=alpha").body)
+    assert q["count"] == 1
+    assert q["items"][0]["name"] == "alpha_mom"
+    by_formula = json.loads(app.handle("GET", "/api/library?query=1/close").body)
+    assert by_formula["count"] == 1
+    assert by_formula["items"][0]["name"] == "beta_val"
+    assert by_formula["items"][0]["metrics"]["ic"] == pytest.approx(0.15)
+    detail_m = json.loads(app.handle("GET", "/api/library/entry-beta_val").body)
+    assert detail_m["metrics"]["sharpe"] == pytest.approx(1.25)
+    limited = json.loads(app.handle("GET", "/api/library?limit=1").body)
+    assert limited["count"] == 1
+    bad = app.handle("GET", "/api/library?limit=nope")
+    assert bad.status == 400
+    assert "limit" in json.loads(bad.body)["error"]
+    neg = app.handle("GET", "/api/library?limit=-1")
+    assert neg.status == 400
+    zero = json.loads(app.handle("GET", "/api/library?limit=0").body)
+    assert zero["count"] == 2
+
+
+def test_web_review_list_default_cap(tmp_path: Path) -> None:
+    manager, repo, _ = _seed_manager(tmp_path, name="rev_cap")
+    report = repo.get_report("rep-web-1")
+    assert report is not None
+    for i in range(6):
+        enqueue_manual_review(report, reason=f"cap-reason-{i}", repo=repo)
+    settings = _settings(tmp_path)
+    app = WebApp(settings=settings, repository=repo, manager=manager)
+    default = json.loads(app.handle("GET", "/api/review").body)
+    assert default["total"] == 6
+    assert default["count"] == 6  # 6 < default cap 50
+    limited = json.loads(app.handle("GET", "/api/review?limit=2").body)
+    assert limited["total"] == 6
+    assert limited["count"] == 2
+    assert len(limited["items"]) == 2
+    bad = app.handle("GET", "/api/review?limit=x")
+    assert bad.status == 400
 
 
 def test_live_http_server_twice(tmp_path: Path) -> None:
@@ -238,6 +325,31 @@ def test_live_http_server_twice(tmp_path: Path) -> None:
         with pytest.raises(HTTPError) as ei:
             urlopen(req, timeout=5)
         assert ei.value.code == 400
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_live_http_rejects_invalid_content_length(tmp_path: Path) -> None:
+    import http.client
+    from urllib.parse import urlparse
+
+    manager, repo, _ = _seed_manager(tmp_path, name="clen")
+    settings = _settings(tmp_path)
+    app = WebApp(settings=settings, repository=repo, manager=manager)
+    httpd, base, _ = start_background_server(host="127.0.0.1", port=0, app=app)
+    try:
+        parsed = urlparse(base)
+        conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
+        conn.putrequest("POST", "/api/reproduce")
+        conn.putheader("Content-Length", "abc")
+        conn.endheaders()
+        conn.send(b"{}")
+        resp = conn.getresponse()
+        body = resp.read()
+        conn.close()
+        assert resp.status == 400
+        assert b"Content-Length" in body
     finally:
         httpd.shutdown()
         httpd.server_close()
