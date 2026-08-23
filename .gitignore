@@ -43,3 +43,4 @@ test_pdf_import.py
 .DS_Store
 Thumbs.db
 
+.sisyphus/
