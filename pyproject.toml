@@ -45,6 +45,7 @@ tushare = ["tushare"]
 paddle = ["paddleocr"]
 vlm = ["transformers>=4.45", "torch", "torchvision", "accelerate"]
 formula = ["pix2text"]
+mcp = ["mcp>=1.2,<2"]
 
 [project.scripts]
 reproagent = "reproagent.cli:app"

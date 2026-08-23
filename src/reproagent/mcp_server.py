@@ -6,6 +6,340 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
+from typing import Any
+
+
+def _score_from_metrics(
+    *,
+    ic_mean: float,
+    sharpe: float,
+    dsr: float | None,
+    pbo: float | None,
+    max_drawdown: float,
+) -> dict:
+    """Map core metrics to a 0–100 score and A/B/C/D grade."""
+    score = 50.0
+    score += max(-20.0, min(20.0, ic_mean * 200.0))
+    score += max(-15.0, min(20.0, sharpe * 10.0))
+    score -= max(0.0, min(15.0, abs(max_drawdown) * 30.0))
+    if dsr is not None:
+        score += max(-10.0, min(15.0, (dsr - 0.5) * 20.0))
+    if pbo is not None:
+        score -= max(0.0, min(20.0, pbo * 25.0))
+
+    score = max(0.0, min(100.0, score))
+    if score >= 80:
+        grade = "A"
+    elif score >= 65:
+        grade = "B"
+    elif score >= 50:
+        grade = "C"
+    else:
+        grade = "D"
+    return {"score": round(score, 1), "grade": grade}
+
+
+def placebo_pvalue_from_result(result: Any) -> float | None:
+    """PlaceboResult uses ``p_value``; older callers looked for ``pvalue``."""
+    if result is None:
+        return None
+    raw = getattr(result, "p_value", None)
+    if raw is None and isinstance(result, dict):
+        raw = result.get("p_value", result.get("pvalue"))
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value != value or value in (float("inf"), float("-inf")):
+        return None
+    return value
+
+
+def _forward_returns_for_factor_panel(factor_values: Any) -> Any | None:
+    """Build date/asset/forward_return from local prices when the panel is usable."""
+    import polars as pl
+
+    if factor_values is None or "date" not in factor_values.columns:
+        return None
+    if "asset" not in factor_values.columns or factor_values["asset"].n_unique() < 2:
+        return None
+    from reproagent.reproducer.data_loader import DataLoader
+    from reproagent.settings import get_settings
+
+    dates = factor_values["date"].drop_nulls().to_list()
+    parsed: list[date] = []
+    for item in dates:
+        if isinstance(item, date) and not isinstance(item, datetime):
+            parsed.append(item)
+        else:
+            text = str(item)[:10]
+            try:
+                parsed.append(date.fromisoformat(text))
+            except ValueError:
+                continue
+    if len(parsed) < 3:
+        return None
+    start, end = min(parsed), max(parsed)
+    px = DataLoader(get_settings()).load_price_data("all", start, end)
+    if px.is_empty() or "close" not in px.columns:
+        return None
+    date_col = "trade_date" if "trade_date" in px.columns else "date"
+    asset_col = "ts_code" if "ts_code" in px.columns else "asset"
+    px = px.sort([asset_col, date_col]).with_columns(
+        (pl.col("close").shift(-1).over(asset_col) / pl.col("close") - 1).alias(
+            "forward_return"
+        )
+    )
+    return px.select(
+        pl.col(date_col).alias("date"),
+        pl.col(asset_col).alias("asset"),
+        "forward_return",
+    )
+
+
+def run_anti_overfitting_from_equity(equity_path: str | None) -> dict:
+    """Read an equity-curve parquet and run the anti-overfitting suite."""
+    import numpy as np
+    import polars as pl
+
+    from reproagent.reproducer.anti_overfitting import (
+        bootstrap_sharpe_ci,
+        deflated_sharpe_ratio,
+        min_backtest_length,
+        placebo_test,
+        prob_backtest_overfitting,
+    )
+
+    empty = {
+        "dsr": None,
+        "dsr_pvalue": None,
+        "pbo": None,
+        "min_btl": None,
+        "sharpe_ci": None,
+        "placebo_pvalue": None,
+    }
+    if not equity_path:
+        return {**empty, "note": "No equity curve path"}
+
+    from pathlib import Path
+
+    path = Path(equity_path)
+    if not path.exists():
+        return {**empty, "note": f"Equity curve not found: {path}"}
+
+    try:
+        eq = pl.read_parquet(path)
+    except Exception as exc:  # noqa: BLE001
+        return {**empty, "note": f"Failed to read equity: {exc}"}
+
+    ret_col = None
+    for c in ("ls_return", "ls_return_raw", "long_short", "ls", "daily_return"):
+        if c in eq.columns:
+            ret_col = c
+            break
+    if ret_col is None:
+        numeric = [
+            c
+            for c in eq.columns
+            if c not in ("date", "trade_date", "group", "turnover", "asset")
+            and eq.schema[c].is_numeric()
+        ]
+        if not numeric:
+            return {**empty, "note": "No return columns in equity curve"}
+        ret_col = numeric[0]
+
+    series = eq[ret_col].drop_nulls().to_numpy()
+    if len(series) < 5:
+        return {**empty, "note": f"Too few observations: {len(series)}"}
+
+    rets = series.astype(float)
+    rets = rets[np.isfinite(rets)]
+    if len(rets) < 5:
+        return {**empty, "note": "Insufficient finite returns"}
+
+    sharpe = float(np.mean(rets) / (np.std(rets) + 1e-12) * np.sqrt(252))
+    dsr = deflated_sharpe_ratio(sharpe, n_trials=10, n_obs=len(rets))
+    pbo = prob_backtest_overfitting(rets, n_splits=min(5, max(2, len(rets) // 5)))
+    min_btl = min_backtest_length(sharpe, variance=float(np.var(rets)))
+    boot = bootstrap_sharpe_ci(rets, n_boot=200)
+
+    placebo_p = None
+    try:
+        fv_path = path.parent / "factor_values.parquet"
+        if fv_path.exists():
+            fv = pl.read_parquet(fv_path)
+            fwd = _forward_returns_for_factor_panel(fv)
+            if fwd is not None:
+                pr = placebo_test(fv, fwd, n_shuffles=50)
+                placebo_p = placebo_pvalue_from_result(pr)
+    except Exception:  # noqa: BLE001
+        placebo_p = None
+
+    return {
+        "dsr": float(dsr.dsr),
+        "dsr_pvalue": float(dsr.p_value),
+        "pbo": float(pbo.pbo),
+        "min_btl": int(min_btl.min_obs),
+        "sharpe_ci": {
+            "lower": float(boot.sharpe_ci_lower),
+            "upper": float(boot.sharpe_ci_upper),
+        },
+        "placebo_pvalue": float(placebo_p) if placebo_p is not None else None,
+        "n_obs": len(rets),
+        "sharpe": sharpe,
+    }
+
+
+def _library_entry_for_grade(backtest_id: str) -> Any:
+    """Resolve a library row by entry id or backtest_result_id."""
+    from sqlmodel import Session, select
+
+    from reproagent.persistence.db import get_engine, init_db
+    from reproagent.persistence.repository import Repository
+    from reproagent.persistence.tables import FactorLibraryTable
+    from reproagent.settings import get_settings
+
+    token = (backtest_id or "").strip()
+    if not token:
+        return None
+    settings = get_settings()
+    engine = get_engine(settings.db_path)
+    init_db(engine)
+    repo = Repository(engine)
+    entry = repo.get_library_entry(token)
+    if entry is not None:
+        return entry
+    with Session(engine) as session:
+        row = session.exec(
+            select(FactorLibraryTable)
+            .where(FactorLibraryTable.backtest_result_id == token)
+            .limit(1)
+        ).first()
+    if row is None:
+        return None
+    return repo.get_library_entry(row.id)
+
+
+def library_grade(expression: str | None, backtest_id: str | None = None) -> dict[str, Any]:
+    """0-100 grade from an expression (and optional backtest_id). Does not import FastMCP."""
+    if not expression and not backtest_id:
+        return {
+            "score": 0,
+            "grade": "D",
+            "error": "Provide expression and/or backtest_id",
+            "scorer": "library_grade",
+        }
+    if expression:
+        from reproagent.reproducer.backtest_bundle import build_backtest_bundle
+
+        bt = build_backtest_bundle(expression)
+        anti = run_anti_overfitting_from_equity(bt.get("equity_curve_path"))
+        metrics = _score_from_metrics(
+            ic_mean=float(bt.get("ic_mean") or 0.0),
+            sharpe=float(bt.get("sharpe_ratio") or 0.0),
+            dsr=anti.get("dsr"),
+            pbo=anti.get("pbo"),
+            max_drawdown=float(bt.get("max_drawdown") or 0.0),
+        )
+        return {
+            **metrics,
+            "backtest_id": bt.get("backtest_id"),
+            "components": {
+                "ic_mean": bt.get("ic_mean"),
+                "sharpe_ratio": bt.get("sharpe_ratio"),
+                "max_drawdown": bt.get("max_drawdown"),
+                "dsr": anti.get("dsr"),
+                "pbo": anti.get("pbo"),
+            },
+            "scorer": "library_grade",
+        }
+    entry = _library_entry_for_grade(str(backtest_id))
+    if entry is not None:
+        stored = dict(getattr(entry, "metrics", None) or {})
+        folder = None
+        try:
+            from reproagent.reproducer.metrics import find_backtest_artifact_dir
+            from reproagent.settings import get_settings
+
+            folder = find_backtest_artifact_dir(get_settings().data_dir, entry)
+        except Exception:  # noqa: BLE001
+            folder = None
+        equity = str(folder / "equity_curve.parquet") if folder is not None else None
+        anti = run_anti_overfitting_from_equity(equity)
+        scored = _score_from_metrics(
+            ic_mean=float(stored.get("ic") or 0.0),
+            sharpe=float(stored.get("sharpe") or 0.0),
+            dsr=anti.get("dsr"),
+            pbo=anti.get("pbo"),
+            max_drawdown=float(stored.get("max_drawdown") or 0.0),
+        )
+        return {
+            **scored,
+            "backtest_id": backtest_id,
+            "library_id": getattr(entry, "id", None),
+            "components": {
+                "ic_mean": stored.get("ic"),
+                "sharpe_ratio": stored.get("sharpe"),
+                "max_drawdown": stored.get("max_drawdown"),
+                "dsr": anti.get("dsr"),
+                "pbo": anti.get("pbo"),
+            },
+            "scorer": "library_grade",
+        }
+    return {
+        "score": 0,
+        "grade": "D",
+        "error": (
+            f"library entry not found: {backtest_id}. Score by backtest_id "
+            "requires the factor to be registered in the library; to score a "
+            "fresh backtest pass expression= instead (or read score from "
+            "run_backtest output)."
+        ),
+        "backtest_id": backtest_id,
+        "scorer": "library_grade",
+    }
+
+
+def library_grade_impl(expression: str | None, backtest_id: str | None = None) -> dict:
+    """Module-level 0-100 grade used by FastMCP and finaince.tools."""
+    return library_grade(expression, backtest_id)
+
+
+def search_factor_library_impl(
+    query: str = "",
+    style: str | None = None,
+    *,
+    limit: int = 50,
+) -> list[dict]:
+    """Search the factor library without constructing FastMCP."""
+    from reproagent.library.manager import FactorLibraryManager
+    from reproagent.models.library import LibraryFilter
+    from reproagent.persistence.db import get_engine, init_db
+    from reproagent.persistence.paths import AppPaths
+    from reproagent.persistence.repository import Repository
+    from reproagent.settings import get_settings
+
+    settings = get_settings()
+    engine = get_engine(settings.db_path)
+    init_db(engine)
+    repo = Repository(engine)
+    paths = AppPaths.from_settings(settings)
+    manager = FactorLibraryManager(repository=repo, paths=paths)
+    filter_ = LibraryFilter(style=style) if style else None
+    cap = None if int(limit) <= 0 else max(1, int(limit))
+    entries = manager.list(filter_, query=query, limit=cap)
+    return [
+        {
+            "id": entry.id,
+            "name": entry.factor.name,
+            "name_cn": entry.factor.name_cn,
+            "style": entry.factor.style,
+            "status": entry.status,
+        }
+        for entry in entries
+    ]
+
 
 def build_mcp_server() -> object:
     """构建并返回 MCP 服务器实例（FastMCP）。
@@ -23,7 +357,9 @@ def build_mcp_server() -> object:
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError:
-        raise ImportError("FastMCP is required for MCP server. Install with: pip install fastmcp")
+        raise ImportError(
+            "MCP server requires the official MCP SDK. Install with: uv sync --extra mcp"
+        )
 
     mcp = FastMCP("reproagent")
 
@@ -53,102 +389,32 @@ def build_mcp_server() -> object:
         universe: str = "csi300",
         num_groups: int = 5,
     ) -> dict:
-        """运行完整因子回测（计算因子值 + 简易评分指标）。"""
-        from datetime import UTC, date, datetime
+        """运行完整因子回测（计算因子值 + 简易评分指标 + 0-100 评分）。"""
+        from reproagent.reproducer.backtest_bundle import build_backtest_bundle
 
-        from reproagent.models.factor_def import FactorDefinition
-        from reproagent.models.replication import BacktestParams, ReplicationConfig
-        from reproagent.reproducer.backtester import StrategyBacktester
-        from reproagent.reproducer.data_loader import DataLoader
-        from reproagent.reproducer.polars_engine import PolarsEngine
-        from reproagent.settings import get_settings
-
-        settings = get_settings()
-        loader = DataLoader(settings)
-        start = date.fromisoformat(start_date)
-        end = date.fromisoformat(end_date)
-
-        fdef = FactorDefinition(
-            id="mcp-backtest",
-            spec_id="mcp",
-            name="mcp_factor",
-            name_cn="MCP因子",
-            style="other",
-            formula=expression,
-            input_fields=[],
+        out = build_backtest_bundle(
+            expression,
+            start_date=start_date,
+            end_date=end_date,
             universe=universe,
-            rebalance_frequency="monthly",
+            num_groups=num_groups,
         )
-
-        data = loader.load_price_data(universe, start, end)
-        cfg = ReplicationConfig(
-            id="mcp",
-            report_id="mcp",
-            factor_specs=[],
-            engine="polars",
-            data_source=settings.data_source,  # type: ignore[arg-type]
-            backtest_params=BacktestParams(start_date=start, end_date=end),
-            parser_version=settings.parser_version,
-            extraction_model_id="mcp",
-            created_at=datetime.now(UTC),
-        )
-        engine = PolarsEngine(cfg, allow_formula_fallback=False)
-        fv = engine.compute(fdef, universe, start, end, data=data)
-        bt = StrategyBacktester(settings).run(
-            factor_values=fv,
-            params=BacktestParams(
-                start_date=start, end_date=end, num_groups=num_groups
-            ),
-            factor_def=fdef,
-            data=data,
-        )
-        mean_fv = 0.0
-        if len(fv) > 0 and "factor_value" in fv.columns:
-            mean_fv = float(fv["factor_value"].drop_nulls().mean() or 0.0)
+        grade = library_grade(expression)
         return {
-            "backtest_id": bt.id,
-            "rows": len(fv),
-            "mean_factor": mean_fv,
-            "ic_mean": bt.ic_mean,
-            "ic_ir": bt.ic_ir,
-            "sharpe_ratio": bt.sharpe_ratio,
-            "max_drawdown": bt.max_drawdown,
-            "long_short_annual_return": bt.long_short_annual_return,
-            "factor_values_path": str(bt.factor_values_path),
-            "equity_curve_path": str(bt.equity_curve_path),
+            "backtest_id": out.get("backtest_id"),
+            "rows": out.get("rows"),
+            "mean_factor": out.get("mean_factor", 0.0),
+            "ic_mean": out.get("ic_mean"),
+            "ic_ir": out.get("ic_ir"),
+            "sharpe_ratio": out.get("sharpe_ratio"),
+            "max_drawdown": out.get("max_drawdown"),
+            "long_short_annual_return": out.get("long_short_annual_return"),
+            "factor_values_path": out.get("factor_values_path"),
+            "equity_curve_path": out.get("equity_curve_path"),
+            "score": {
+                k: grade[k] for k in ("score", "grade") if k in grade
+            },
         }
-
-    def _score_from_metrics(
-        *,
-        ic_mean: float,
-        sharpe: float,
-        dsr: float | None,
-        pbo: float | None,
-        max_drawdown: float,
-    ) -> dict:
-        """将核心指标映射到 0–100 分与 A/B/C/D 等级。"""
-        score = 50.0
-        # IC 贡献
-        score += max(-20.0, min(20.0, ic_mean * 200.0))
-        # Sharpe 贡献
-        score += max(-15.0, min(20.0, sharpe * 10.0))
-        # 回撤惩罚
-        score -= max(0.0, min(15.0, abs(max_drawdown) * 30.0))
-        if dsr is not None:
-            score += max(-10.0, min(15.0, (dsr - 0.5) * 20.0))
-        if pbo is not None:
-            score -= max(0.0, min(20.0, pbo * 25.0))
-
-        score = max(0.0, min(100.0, score))
-        if score >= 80:
-            grade = "A"
-        elif score >= 65:
-            grade = "B"
-        elif score >= 50:
-            grade = "C"
-        else:
-            grade = "D"
-        return {"score": round(score, 1), "grade": grade}
 
     @mcp.tool()
     def score_factor(expression: str | None = None, backtest_id: str | None = None) -> dict:
@@ -157,150 +423,13 @@ def build_mcp_server() -> object:
         优先用 expression 现算；若仅提供 backtest_id，则尝试从 equity 曲线路径推断
         （当前实现：expression 路径为主）。
         """
-        if not expression and not backtest_id:
-            return {
-                "score": 0,
-                "grade": "D",
-                "error": "Provide expression and/or backtest_id",
-            }
-
-        if expression:
-            bt = run_backtest(expression)
-            anti = run_anti_overfitting_from_equity(bt.get("equity_curve_path"))
-            metrics = _score_from_metrics(
-                ic_mean=float(bt.get("ic_mean") or 0.0),
-                sharpe=float(bt.get("sharpe_ratio") or 0.0),
-                dsr=anti.get("dsr"),
-                pbo=anti.get("pbo"),
-                max_drawdown=float(bt.get("max_drawdown") or 0.0),
-            )
-            return {
-                **metrics,
-                "backtest_id": bt.get("backtest_id"),
-                "components": {
-                    "ic_mean": bt.get("ic_mean"),
-                    "sharpe_ratio": bt.get("sharpe_ratio"),
-                    "max_drawdown": bt.get("max_drawdown"),
-                    "dsr": anti.get("dsr"),
-                    "pbo": anti.get("pbo"),
-                },
-            }
-
-        return {
-            "score": 0,
-            "grade": "C",
-            "note": "backtest_id-only lookup is limited; pass expression for full score",
-            "backtest_id": backtest_id,
-        }
-
-    def run_anti_overfitting_from_equity(equity_path: str | None) -> dict:
-        """从 equity 曲线 parquet 提取 long_short 收益并跑反过拟合。"""
-        import numpy as np
-        import polars as pl
-
-        from reproagent.reproducer.anti_overfitting import (
-            bootstrap_sharpe_ci,
-            deflated_sharpe_ratio,
-            min_backtest_length,
-            placebo_test,
-            prob_backtest_overfitting,
-        )
-
-        empty = {
-            "dsr": None,
-            "dsr_pvalue": None,
-            "pbo": None,
-            "min_btl": None,
-            "sharpe_ci": None,
-            "placebo_pvalue": None,
-        }
-        if not equity_path:
-            return {**empty, "note": "No equity curve path"}
-
-        from pathlib import Path
-
-        path = Path(equity_path)
-        if not path.exists():
-            return {**empty, "note": f"Equity curve not found: {path}"}
-
         try:
-            eq = pl.read_parquet(path)
-        except Exception as exc:  # noqa: BLE001
-            return {**empty, "note": f"Failed to read equity: {exc}"}
+            from finaince.tools import handle_score_factor
 
-        # StrategyBacktester 写出 ls_return；兼容其他列名
-        ret_col = None
-        for c in ("ls_return", "ls_return_raw", "long_short", "ls", "daily_return"):
-            if c in eq.columns:
-                ret_col = c
-                break
-        if ret_col is None:
-            numeric = [
-                c
-                for c in eq.columns
-                if c not in ("date", "trade_date", "group", "turnover", "asset")
-                and eq.schema[c].is_numeric()
-            ]
-            if not numeric:
-                return {**empty, "note": "No return columns in equity curve"}
-            ret_col = numeric[0]
-
-        series = eq[ret_col].drop_nulls().to_numpy()
-        if len(series) < 5:
-            return {**empty, "note": f"Too few observations: {len(series)}"}
-
-        rets = series.astype(float)
-
-        rets = rets[np.isfinite(rets)]
-        if len(rets) < 5:
-            return {**empty, "note": "Insufficient finite returns"}
-
-        sharpe = float(np.mean(rets) / (np.std(rets) + 1e-12) * np.sqrt(252))
-        dsr = deflated_sharpe_ratio(sharpe, n_trials=10, n_obs=len(rets))
-        pbo = prob_backtest_overfitting(rets, n_splits=min(5, max(2, len(rets) // 5)))
-        min_btl = min_backtest_length(sharpe, variance=float(np.var(rets)))
-        boot = bootstrap_sharpe_ci(rets, n_boot=200)
-
-        # placebo 需要因子值面板；此处用收益随机置换近似
-        placebo_p = None
-        try:
-            # 构造伪面板：date, asset, factor_value + forward return
-            n = len(rets)
-            fake_fv = pl.DataFrame(
-                {
-                    "date": list(range(n)),
-                    "asset": ["A"] * n,
-                    "factor_value": rets,
-                }
-            )
-            fake_fwd = pl.DataFrame(
-                {
-                    "date": list(range(n)),
-                    "asset": ["A"] * n,
-                    "forward_return": np.roll(rets, -1),
-                }
-            )
-            # placebo_test 签名可能不同，做兼容
-            pr = placebo_test(fake_fv, fake_fwd, n_shuffles=50)
-            placebo_p = getattr(pr, "pvalue", None) or (
-                pr.get("pvalue") if isinstance(pr, dict) else None
-            )
-        except Exception:  # noqa: BLE001
-            placebo_p = None
-
-        return {
-            "dsr": float(dsr.dsr),
-            "dsr_pvalue": float(dsr.p_value),
-            "pbo": float(pbo.pbo),
-            "min_btl": int(min_btl.min_obs),
-            "sharpe_ci": {
-                "lower": float(boot.sharpe_ci_lower),
-                "upper": float(boot.sharpe_ci_upper),
-            },
-            "placebo_pvalue": float(placebo_p) if placebo_p is not None else None,
-            "n_obs": len(rets),
-            "sharpe": sharpe,
-        }
+            return handle_score_factor(expression=expression, backtest_id=backtest_id)
+        except ImportError:
+            pass
+        return library_grade(expression, backtest_id)
 
     @mcp.tool()
     def diagnose_factor(expression: str) -> dict:
@@ -371,38 +500,14 @@ def build_mcp_server() -> object:
     def search_factor_library(query: str = "", style: str | None = None) -> list[dict]:
         """搜索因子库。"""
         try:
-            from reproagent.library.manager import FactorLibraryManager
-            from reproagent.persistence.db import get_engine, init_db
-            from reproagent.persistence.paths import AppPaths
-            from reproagent.persistence.repository import Repository
-            from reproagent.settings import get_settings
+            from finaince.tools import handle_search_library
 
-            settings = get_settings()
-            engine = get_engine(settings.db_path)
-            init_db(engine)
-            repo = Repository(engine)
-            paths = AppPaths.from_settings(settings)
-            manager = FactorLibraryManager(repository=repo, paths=paths)
-            entries = manager.list()
-            results = []
-            q = (query or "").lower()
-            for e in entries:
-                if style and e.factor.style != style:
-                    continue
-                name_l = e.factor.name.lower()
-                cn_l = (e.factor.name_cn or "").lower()
-                if q and q not in name_l and q not in cn_l:
-                    continue
-                results.append(
-                    {
-                        "id": e.id,
-                        "name": e.factor.name,
-                        "name_cn": e.factor.name_cn,
-                        "style": e.factor.style,
-                        "status": e.status,
-                    }
-                )
-            return results
+            payload = handle_search_library(query=query, style=style)
+            return list(payload.get("items") or [])
+        except Exception:
+            pass
+        try:
+            return search_factor_library_impl(query, style, limit=50)
         except Exception:
             return []
 
