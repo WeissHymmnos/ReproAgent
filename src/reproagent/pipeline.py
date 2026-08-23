@@ -11,6 +11,35 @@ from typing import Any
 from reproagent.settings import Settings
 
 
+def _notify_catalog_library(entry: Any, backtest: Any) -> None:
+    import os
+
+    if os.environ.get("FINAINCE_CATALOG", "1") == "0":
+        return
+    try:
+        from finaince.catalog.hooks import accept_library_entry
+        from reproagent.reproducer.metrics import serialize_equity_returns
+        from reproagent.reproducer.run_flags import snapshot_run_flags
+    except ImportError:
+        return
+    extras = {
+        "metrics": {
+            "ic_mean": getattr(backtest, "ic_mean", None),
+            "ic_ir": getattr(backtest, "ic_ir", None),
+            "sharpe_ratio": getattr(backtest, "sharpe_ratio", None),
+            "max_drawdown": getattr(backtest, "max_drawdown", None),
+            "long_short_annual_return": getattr(backtest, "long_short_annual_return", None),
+        },
+        "daily_returns": serialize_equity_returns(getattr(backtest, "equity_curve_path", None)),
+        "factor_values_uri": str(getattr(backtest, "factor_values_path", "") or "") or None,
+        "observability": snapshot_run_flags(),
+    }
+    try:
+        accept_library_entry(entry, extras=extras)
+    except Exception:  # noqa: BLE001
+        return
+
+
 def _single_factor_config(config: Any, spec: Any) -> Any:
     """从多因子 config 切出仅含一个 spec 的副本。"""
     return config.model_copy(update={"factor_specs": [spec]}, deep=True)
@@ -34,6 +63,8 @@ def _process_one_factor(
     repository: Any,
     logger: Any,
     experience_memory: Any = None,
+    memory_writer: Any = None,
+    pipeline_settings: Any = None,
 ) -> dict[str, Any]:
     import uuid
     from datetime import UTC, datetime
@@ -46,15 +77,6 @@ def _process_one_factor(
     from reproagent.settings import get_settings as _gs
 
     reported = spec.reported_metrics or ReportedMetrics()
-    # 严格模式：始终无 GT 对照，避免缓存的 reported_metrics 触发反思/exhausted
-    if not _gs().formula_fallback_allowed:
-        reported = ReportedMetrics()
-        # 同步清空 config 中的对照指标
-        if factor_config.factor_specs:
-            factor_config = factor_config.model_copy(deep=True)
-            factor_config.factor_specs[0] = factor_config.factor_specs[0].model_copy(
-                update={"reported_metrics": ReportedMetrics()}
-            )
     factor_name = spec.factor_name
     input_fields = [f.name for f in (spec.input_fields or [])]
 
@@ -128,7 +150,39 @@ def _process_one_factor(
             update={"formula": nr.formula, "universe": nr.universe}
         )
 
-    cached_bt = cache_manager.get_cached_backtest(cache_key, factor_name)
+    from reproagent.reproducer.lookahead_detector import detect_lookahead
+
+    _final_formula = (
+        factor_config.factor_specs[0].formula
+        if factor_config.factor_specs
+        else spec.formula
+    )
+    lookahead_report = detect_lookahead(_final_formula or "")
+    if lookahead_report.has_lookahead:
+        first = (
+            lookahead_report.findings[0].description
+            if lookahead_report.findings
+            else "future reference"
+        )
+        reason = f"Lookahead bias detected for {factor_name}: {first}"
+        repository.enqueue_review(report.id, reason)
+        logger.warning("Lookahead hard-block for %s: %s", factor_name, reason)
+        return {
+            "factor_name": factor_name,
+            "status": "review_enqueued",
+            "reflection_status": "lookahead_blocked",
+            "lookahead": {
+                "has_lookahead": True,
+                "risk_level": lookahead_report.risk_level,
+            },
+        }
+
+    from reproagent.parser.config_builder import backtest_params_token
+
+    params_token = backtest_params_token(factor_config.backtest_params)
+    cached_bt = cache_manager.get_cached_backtest(
+        cache_key, factor_name, params_token=params_token
+    )
     if cached_bt and is_healthy_reproduction(cached_bt):
         result = cached_bt
         logger.info("Loaded backtest result from cache for %s", factor_name)
@@ -150,7 +204,14 @@ def _process_one_factor(
             )
             result = reproducer.reproduce(factor_config)
         if cached_data is not None and is_healthy_reproduction(result):
-            cache_manager.save(cache_key, markdown, specs, config, result)
+            cache_manager.save(
+                cache_key,
+                markdown,
+                specs,
+                config,
+                result,
+                params_token=params_token,
+            )
 
     deviation = analyzer.analyze(result, reported, tolerances)
     deviation.root_cause = analyzer.classify_root_cause(deviation, factor_config)
@@ -164,6 +225,8 @@ def _process_one_factor(
         except Exception as exc:  # noqa: BLE001
             logger.warning("compute_factor for register failed (%s); building def only", exc)
             factor_def = reproducer._build_factor_def(factor_config.factor_specs[0])
+        from reproagent.reproducer.metrics import metrics_from_backtest
+
         entry = FactorLibraryEntry(
             id=uuid.uuid4().hex,
             factor=factor_def,
@@ -174,8 +237,10 @@ def _process_one_factor(
             version="1.0.0",
             dedup_hash=compute_dedup_hash(factor_def),
             created_at=datetime.now(UTC),
+            metrics=metrics_from_backtest(result),
         )
         saved = library_manager.register(entry)
+        _notify_catalog_library(saved, result)
         if experience_memory is not None:
             try:
                 experience_memory.record_success(
@@ -208,6 +273,37 @@ def _process_one_factor(
             },
         }
 
+    settings_now = pipeline_settings or _gs()
+    if settings_now.skip_mock_reflection and settings_now.mock_llm_allowed:
+        reason = f"Reflection failed for {factor_name}: skipped_mock"
+        queued = repository.enqueue_review(
+            report.id,
+            reason,
+            payload={
+                "reason_type": "reflection_skipped_mock",
+                "factor_name": factor_name,
+            },
+        )
+        if memory_writer is not None:
+            try:
+                from reproagent.models.memory import FeedbackSource
+
+                memory_writer.write_bad(
+                    report_id=report.id,
+                    spec=spec,
+                    factor_name=factor_name,
+                    failure_type="reflection_skipped_mock",
+                    root_cause="data_mismatch",
+                    source=FeedbackSource.MOCK,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("MemoryWriter.write_bad failed: %s", exc)
+        return {
+            "factor_name": factor_name,
+            "status": "review_enqueued" if queued else "skipped_mock",
+            "reflection_status": "skipped_mock",
+        }
+
     state = reflection_controller.run(factor_config, reported)
     if state.status == "converged":
         best_step = next((s for s in state.steps if s.id == state.best_step_id), None)
@@ -222,6 +318,8 @@ def _process_one_factor(
                 if best_step.deviation_report
                 else uuid.uuid4().hex
             )
+            from reproagent.reproducer.metrics import metrics_from_backtest
+
             entry = FactorLibraryEntry(
                 id=uuid.uuid4().hex,
                 factor=factor_def,
@@ -232,8 +330,12 @@ def _process_one_factor(
                 version="1.0.0",
                 dedup_hash=compute_dedup_hash(factor_def),
                 created_at=datetime.now(UTC),
+                metrics=metrics_from_backtest(
+                    getattr(best_step, "backtest_result", None) or result
+                ),
             )
             saved = library_manager.register(entry)
+            _notify_catalog_library(saved, getattr(best_step, "backtest_result", None) or result)
             cache_manager.save(
                 cache_key,
                 cached_data[0] if cached_data else markdown,
@@ -279,7 +381,7 @@ def _process_one_factor(
         return soft
 
     reason = f"Reflection failed for {factor_name}: {state.status}"
-    repository.enqueue_review(report.id, reason)
+    queued = repository.enqueue_review(report.id, reason)
     if experience_memory is not None:
         try:
             failure_mode = (
@@ -298,7 +400,7 @@ def _process_one_factor(
             logger.warning("ExperienceMemory.record_failure failed: %s", exc)
     return {
         "factor_name": factor_name,
-        "status": "review_enqueued",
+        "status": "review_enqueued" if queued else str(state.status or "exhausted"),
         "reflection_status": state.status,
     }
 
@@ -356,6 +458,8 @@ def _try_soft_pass_after_reflection(
         # 再次确认当前配置算出的因子值可用（避免 null-factor 假通过）
         if not is_healthy_reproduction(cand, factor_values=factor_vals):
             return None
+        from reproagent.reproducer.metrics import metrics_from_backtest
+
         entry = FactorLibraryEntry(
             id=uuid.uuid4().hex,
             factor=factor_def,
@@ -366,8 +470,10 @@ def _try_soft_pass_after_reflection(
             version="1.0.0",
             dedup_hash=compute_dedup_hash(factor_def),
             created_at=datetime.now(UTC),
+            metrics=metrics_from_backtest(cand),
         )
         saved = library_manager.register(entry)
+        _notify_catalog_library(saved, cand)
         if experience_memory is not None:
             try:
                 experience_memory.record_success(
@@ -388,7 +494,7 @@ def _try_soft_pass_after_reflection(
         )
         return {
             "factor_name": use_spec.factor_name,
-            "status": "passed",
+            "status": "soft_passed",
             "factor_id": saved.id,
             "reflection_status": f"soft_pass:{getattr(state, 'status', 'n/a')}",
             "soft_pass": True,
@@ -411,15 +517,56 @@ def _aggregate_status(factor_results: list[dict[str, Any]]) -> str:
     statuses = {r["status"] for r in factor_results}
     success = {"passed", "converged"}
     if statuses <= success:
-        return "passed" if "passed" in statuses or statuses == {"converged"} else "passed"
+        return "passed"
     if statuses & success:
         return "partial"
     if "review_enqueued" in statuses:
         return "review_enqueued"
+    if "soft_passed" in statuses:
+        return "partial"
     return next(iter(statuses))
 
 
-def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
+def _versioned_cache_key(file_hash: str, settings: Settings) -> str:
+    """file_hash + 解析器 schema 版本 + 提取模型 共同决定缓存键，防陈旧重放。"""
+    from reproagent.cache.cache_key import (
+        PARSER_CACHE_SCHEMA_VERSION,
+        compute_cache_key,
+    )
+
+    return compute_cache_key(
+        file_hash,
+        parser_version=PARSER_CACHE_SCHEMA_VERSION,
+        extraction_model_id=f"{settings.llm_provider}:{settings.llm_model}",
+    )
+
+
+def _data_context(settings: Settings, config: Any) -> dict[str, Any]:
+    """输出实际生效的数据源/路径/回测窗口，避免 .env 静默覆盖造成的困惑。"""
+    bp = getattr(config, "backtest_params", None)
+    specs = getattr(config, "factor_specs", None)
+    return {
+        "data_source": settings.data_source,
+        "local_data_path": (
+            str(settings.local_data_path) if settings.data_source == "local" else None
+        ),
+        "backtest_window": (
+            {"start": str(bp.start_date), "end": str(bp.end_date)} if bp else None
+        ),
+        "universe": specs[0].universe if specs else None,
+    }
+
+
+def reproduce_report(pdf_path: Path, settings: Settings, backtest_kwargs: dict[str, Any] | None = None) -> dict | None:
+    path = Path(pdf_path)
+    if path.suffix.lower() in {".md", ".txt"}:
+        return reproduce_text(
+            path.read_text(encoding="utf-8", errors="replace"),
+            settings,
+            title=path.stem or "Markdown Input",
+            backtest_kwargs=backtest_kwargs,
+        )
+
     import logging
 
     from reproagent.cache.cache_manager import CacheManager
@@ -450,12 +597,18 @@ def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
     repository = Repository(engine)
 
     # 1. Ingestion
-    report = upload_pdf(pdf_path)
-    report = validate_pdf(report)
-    repository.save_report(report)
+    incoming = upload_pdf(pdf_path)
+    incoming = validate_pdf(incoming)
+    existing = repository.get_report_by_hash(incoming.file_hash)
+    if existing is not None:
+        report = existing
+    else:
+        report = incoming
+        repository.save_report(report)
 
     if report.validation_status == "invalid":
-        repository.enqueue_review(report.id, "PDF validation failed")
+        if existing is None:
+            repository.enqueue_review(report.id, "PDF validation failed")
         return _finalize_pipeline_result(
             overall="invalid",
             factor_results=[],
@@ -464,7 +617,7 @@ def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
         )
 
     cache_manager = CacheManager(paths)
-    cache_key = report.file_hash
+    cache_key = _versioned_cache_key(report.file_hash, settings)
 
     # 2. Parse (with cache). 严格模式跳过 parse cache，避免冻结旧版 domain/proxy 公式。
     parser = ReportParser(settings)
@@ -473,13 +626,27 @@ def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
     use_parse_cache = bool(cached_data) and bool(settings.formula_fallback_allowed)
     if use_parse_cache:
         markdown, specs, config = cached_data
+        from reproagent.parser.config_builder import apply_backtest_kwargs
+
+        config = apply_backtest_kwargs(config, backtest_kwargs)
         logger.info("Loaded parsing results from cache for %s", cache_key)
     else:
         if cached_data and not settings.formula_fallback_allowed:
             logger.info(
                 "Strict mode: ignoring parse cache for %s (re-extract)", cache_key
             )
-        specs = parser.parse(report)
+        try:
+            specs = parser.parse(report)
+        except ValueError as exc:
+            reason = f"Schema validation failed for extracted factors: {exc}"
+            repository.enqueue_review(report.id, reason)
+            logger.warning("parse() rejected specs for %s: %s", report.id, exc)
+            return _finalize_pipeline_result(
+                overall="review_enqueued",
+                factor_results=[],
+                report_id=report.id,
+                source="pdf",
+            )
         if not specs:
             repository.enqueue_review(report.id, "No factors extracted")
             return _finalize_pipeline_result(
@@ -488,7 +655,7 @@ def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
                 report_id=report.id,
                 source="pdf",
             )
-        config = parser.build_config(specs, report)
+        config = parser.build_config(specs, report, backtest_kwargs=backtest_kwargs)
         markdown = (
             parser.layout_extractor.extract(report)
             if hasattr(parser.layout_extractor, "extract")
@@ -510,6 +677,17 @@ def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
     from reproagent.library.experience_memory import ExperienceMemory
 
     experience_memory = ExperienceMemory(db_path=str(settings.db_path))
+    memory_writer = None
+    rma_summary: list[dict[str, Any]] = []
+    if settings.memory_enabled:
+        from reproagent.memory.store import MemoryStore
+        from reproagent.memory.writer import MemoryWriter
+
+        memory_writer = MemoryWriter(MemoryStore(repository), settings)
+        try:
+            rma_summary = memory_writer.absorb_specs(list(config.factor_specs), report.id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("RMA absorb_specs failed: %s", exc)
 
     data_loader = DataLoader(settings)
     reproducer = FactorReproducer(settings, data_loader)
@@ -547,12 +725,19 @@ def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
                 repository=repository,
                 logger=logger,
                 experience_memory=experience_memory,
+                memory_writer=memory_writer,
+                pipeline_settings=settings,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Factor %s failed: %s", spec.factor_name, exc)
-            repository.enqueue_review(
-                report.id, f"Factor {spec.factor_name} failed: {exc}"
-            )
+            from reproagent.exceptions import ConfigurationError
+
+            if isinstance(exc, ConfigurationError):
+                logger.error("Factor %s failed: %s", spec.factor_name, exc)
+            else:
+                logger.exception("Factor %s failed: %s", spec.factor_name, exc)
+                repository.enqueue_review(
+                    report.id, f"Factor {spec.factor_name} failed: {exc}"
+                )
             one = {
                 "factor_name": spec.factor_name,
                 "status": "error",
@@ -565,6 +750,8 @@ def reproduce_report(pdf_path: Path, settings: Settings) -> dict | None:
         factor_results=factor_results,
         report_id=report.id,
         source="pdf",
+        rma=rma_summary,
+        data_context=_data_context(settings, config),
     )
 
 
@@ -574,6 +761,8 @@ def _finalize_pipeline_result(
     factor_results: list[dict[str, Any]],
     report_id: str | None = None,
     source: str = "pdf",
+    rma: list[dict[str, Any]] | None = None,
+    data_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """统一 CLI / pipeline 输出 schema。"""
     from reproagent.reproducer.run_flags import snapshot_run_flags
@@ -594,12 +783,16 @@ def _finalize_pipeline_result(
             "total": len(factor_results),
             "passed": sum(1 for r in factor_results if r.get("status") == "passed"),
             "converged": sum(1 for r in factor_results if r.get("status") == "converged"),
+            "soft_passed": sum(
+                1 for r in factor_results if r.get("status") == "soft_passed"
+            ),
             "review_enqueued": sum(
                 1 for r in factor_results if r.get("status") == "review_enqueued"
             ),
             "errors": sum(1 for r in factor_results if r.get("status") == "error"),
         },
         # 可审计：供 batch 评分判定 full_no_fallback_success
+        "rma": list(rma or []),
         "observability": {
             "formula_fallback": bool(flags.get("formula_fallback")),
             "formula_proxy": bool(flags.get("formula_proxy")),
@@ -611,6 +804,8 @@ def _finalize_pipeline_result(
             "recovery_reasons": list(flags.get("recovery_reasons") or []),
         },
     }
+    if data_context:
+        out["data_context"] = data_context
     successes = [r for r in factor_results if r.get("factor_id")]
     if len(successes) == 1:
         out["factor_id"] = successes[0]["factor_id"]
@@ -627,6 +822,7 @@ def reproduce_text(
     *,
     title: str = "Markdown Input",
     broker: str = "unknown",
+    backtest_kwargs: dict[str, Any] | None = None,
 ) -> dict | None:
     """端到端复现：直接对 Markdown/文本做 LLM 提取 → 复现 → 入库。
 
@@ -671,21 +867,26 @@ def reproduce_text(
 
     # 创建虚拟 ResearchReport（无真实 PDF）
     today = datetime.now(UTC).date()
-    report = ResearchReport(
-        id=uuid.uuid4().hex,
-        file_path=Path("markdown://input"),
-        file_hash=content_hash(text),
-        title=title,
-        broker=broker,
-        report_date=today,
-        page_count=1,
-        validation_status="valid",
-        ingested_at=datetime.now(UTC),
-    )
-    repository.save_report(report)
+    file_hash = content_hash(text)
+    existing = repository.get_report_by_hash(file_hash)
+    if existing is not None:
+        report = existing
+    else:
+        report = ResearchReport(
+            id=uuid.uuid4().hex,
+            file_path=Path("markdown://input"),
+            file_hash=file_hash,
+            title=title,
+            broker=broker,
+            report_date=today,
+            page_count=1,
+            validation_status="valid",
+            ingested_at=datetime.now(UTC),
+        )
+        repository.save_report(report)
 
     cache_manager = CacheManager(paths)
-    cache_key = report.file_hash
+    cache_key = _versioned_cache_key(report.file_hash, settings)
 
     # Parse from text (skip LayoutExtractor). 严格模式跳过 parse cache。
     parser = ReportParser(settings)
@@ -694,13 +895,27 @@ def reproduce_text(
     use_parse_cache = bool(cached_data) and bool(settings.formula_fallback_allowed)
     if use_parse_cache:
         _, specs, config = cached_data
+        from reproagent.parser.config_builder import apply_backtest_kwargs
+
+        config = apply_backtest_kwargs(config, backtest_kwargs)
         logger.info("Loaded parsing results from cache for %s", cache_key)
     else:
         if cached_data and not settings.formula_fallback_allowed:
             logger.info(
                 "Strict mode: ignoring parse cache for %s (re-extract)", cache_key
             )
-        specs = parser.parse_text(report, text)
+        try:
+            specs = parser.parse_text(report, text)
+        except ValueError as exc:
+            reason = f"Schema validation failed for extracted factors: {exc}"
+            repository.enqueue_review(report.id, reason)
+            logger.warning("parse_text() rejected specs for %s: %s", report.id, exc)
+            return _finalize_pipeline_result(
+                overall="review_enqueued",
+                factor_results=[],
+                report_id=report.id,
+                source="text",
+            )
         if not specs:
             repository.enqueue_review(report.id, "No factors extracted from text")
             return _finalize_pipeline_result(
@@ -709,7 +924,7 @@ def reproduce_text(
                 report_id=report.id,
                 source="text",
             )
-        config = parser.build_config(specs, report)
+        config = parser.build_config(specs, report, backtest_kwargs=backtest_kwargs)
         from reproagent.reproducer.run_flags import get_run_flags
 
         if not get_run_flags().get("formula_proxy"):
@@ -725,6 +940,17 @@ def reproduce_text(
     from reproagent.library.experience_memory import ExperienceMemory
 
     experience_memory = ExperienceMemory(db_path=str(settings.db_path))
+    memory_writer = None
+    rma_summary: list[dict[str, Any]] = []
+    if settings.memory_enabled:
+        from reproagent.memory.store import MemoryStore
+        from reproagent.memory.writer import MemoryWriter
+
+        memory_writer = MemoryWriter(MemoryStore(repository), settings)
+        try:
+            rma_summary = memory_writer.absorb_specs(list(config.factor_specs), report.id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("RMA absorb_specs failed: %s", exc)
 
     data_loader = DataLoader(settings)
     reproducer = FactorReproducer(settings, data_loader)
@@ -762,12 +988,19 @@ def reproduce_text(
                 repository=repository,
                 logger=logger,
                 experience_memory=experience_memory,
+                memory_writer=memory_writer,
+                pipeline_settings=settings,
             )
-        except Exception as exc:
-            logger.exception("Factor %s failed: %s", spec.factor_name, exc)
-            repository.enqueue_review(
-                report.id, f"Factor {spec.factor_name} failed: {exc}"
-            )
+        except Exception as exc:  # noqa: BLE001
+            from reproagent.exceptions import ConfigurationError
+
+            if isinstance(exc, ConfigurationError):
+                logger.error("Factor %s failed: %s", spec.factor_name, exc)
+            else:
+                logger.exception("Factor %s failed: %s", spec.factor_name, exc)
+                repository.enqueue_review(
+                    report.id, f"Factor {spec.factor_name} failed: {exc}"
+                )
             one = {
                 "factor_name": spec.factor_name,
                 "status": "error",
@@ -780,4 +1013,6 @@ def reproduce_text(
         factor_results=factor_results,
         report_id=report.id,
         source="text",
+        rma=rma_summary,
+        data_context=_data_context(settings, config),
     )

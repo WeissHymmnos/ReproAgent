@@ -44,27 +44,33 @@ class CacheManager:
         except Exception:
             return None
 
-    def get_cached_backtest(self, cache_key: str, factor_id: str) -> BacktestResult | None:
+    def get_cached_backtest(
+        self,
+        cache_key: str,
+        factor_id: str,
+        params_token: str | None = None,
+    ) -> BacktestResult | None:
         """命中 → 缓存回测结果；否则 None。"""
         entry_dir = self.paths.cache_entry_dir(cache_key)
+        names: list[str] = []
+        if params_token:
+            names.append(f"backtest_{factor_id}_{params_token}.json")
+        else:
+            names.append(f"backtest_{factor_id}.json")
+            names.append("backtest.json")
 
-        factor_backtest_path = entry_dir / f"backtest_{factor_id}.json"
-        if factor_backtest_path.exists():
+        for name in names:
+            path = entry_dir / name
+            if not path.exists():
+                continue
             try:
-                with open(factor_backtest_path, encoding="utf-8") as f:
-                    return BacktestResult.model_validate_json(f.read())
-            except Exception:
-                pass
-
-        backtest_path = entry_dir / "backtest.json"
-        if backtest_path.exists():
-            try:
-                with open(backtest_path, encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     res = BacktestResult.model_validate_json(f.read())
-                if res.factor_id == factor_id:
-                    return res
+                if name == "backtest.json" and res.factor_id != factor_id:
+                    continue
+                return res
             except Exception:
-                pass
+                continue
 
         return None
 
@@ -75,6 +81,7 @@ class CacheManager:
         specs: list[ParsedFactorSpec],
         config: ReplicationConfig,
         backtest_result: BacktestResult | None = None,
+        params_token: str | None = None,
     ) -> None:
         """保存缓存到 cache/<cache_key>/。"""
         entry_dir = self.paths.cache_entry_dir(cache_key)
@@ -95,13 +102,16 @@ class CacheManager:
             f.write(config.model_dump_json(indent=2))
 
         if backtest_result is not None:
+            payload = backtest_result.model_dump_json(indent=2)
+            if params_token:
+                token_path = (
+                    entry_dir / f"backtest_{backtest_result.factor_id}_{params_token}.json"
+                )
+                token_path.write_text(payload, encoding="utf-8")
             backtest_path = entry_dir / "backtest.json"
-            with open(backtest_path, "w", encoding="utf-8") as f:
-                f.write(backtest_result.model_dump_json(indent=2))
-
+            backtest_path.write_text(payload, encoding="utf-8")
             factor_backtest_path = entry_dir / f"backtest_{backtest_result.factor_id}.json"
-            with open(factor_backtest_path, "w", encoding="utf-8") as f:
-                f.write(backtest_result.model_dump_json(indent=2))
+            factor_backtest_path.write_text(payload, encoding="utf-8")
 
     def cache_dir(self, cache_key: str) -> Path:
         return self.paths.cache_entry_dir(cache_key)

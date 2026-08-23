@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 
+PARSER_CACHE_SCHEMA_VERSION = "2"
+
 
 def compute_cache_key(
     pdf_hash: str,

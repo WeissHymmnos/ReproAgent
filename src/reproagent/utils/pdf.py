@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from pypdf import PdfReader
 
 from reproagent.exceptions import ValidationError
+
+
+def _quiet_pypdf() -> None:
+    logging.getLogger("pypdf").setLevel(logging.ERROR)
 
 
 def get_page_count(path: Path) -> int:
@@ -16,6 +21,7 @@ def get_page_count(path: Path) -> int:
     if not path.is_file():
         raise ValidationError(f"Path is not a file: {path}")
     try:
+        _quiet_pypdf()
         reader = PdfReader(path)
         return len(reader.pages)
     except Exception as e:
@@ -29,6 +35,7 @@ def is_readable(path: Path) -> bool:
     if not path.is_file():
         raise ValidationError(f"Path is not a file: {path}")
     try:
+        _quiet_pypdf()
         reader = PdfReader(path)
         return len(reader.pages) >= 0
     except Exception:
