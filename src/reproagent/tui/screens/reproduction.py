@@ -2,14 +2,72 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Button, Input, Label, ProgressBar, RichLog
+from textual.widgets import Button, Input, Label, ProgressBar
+
+from reproagent.tui.widgets.deviation_gauge import DeviationGauge
+from reproagent.tui.widgets.log_panel import LogPanel
 
 from reproagent.settings import get_settings
+
+
+def parse_stage_banner(settings: object) -> str:
+    """Honest parse-stage line: do not claim OCR/LLM backends that are off."""
+    key = ""
+    try:
+        secret = getattr(settings, "llm_api_key", None)
+        if secret is not None:
+            key = secret.get_secret_value().strip()
+    except Exception:  # noqa: BLE001
+        key = ""
+    mock = bool(getattr(settings, "mock_llm_allowed", True)) and not key
+    if mock:
+        return "解析中（离线 mock 提取，未调用 OCR / 外部 LLM）..."
+    backend = getattr(settings, "finpdfpro_vlm_backend", "none") or "none"
+    return f"解析中（parser={getattr(settings, 'parser_backend', 'finpdfpro')}, vlm={backend}）..."
+
+
+def metrics_for_gauge(outcome: dict | None) -> dict[str, float]:
+    """Numeric factor metrics for the TUI deviation panel."""
+    factors = (outcome or {}).get("factors") or []
+    if not factors or not isinstance(factors[0], dict):
+        return {}
+    raw = factors[0].get("metrics") or {}
+    out: dict[str, float] = {}
+    if not isinstance(raw, dict):
+        return out
+    for key, value in raw.items():
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number == number and number not in (float("inf"), float("-inf")):
+            out[str(key)] = number
+    return out
+
+
+def reproduce_input_error(raw: str) -> str | None:
+    """Validate a TUI/CLI reproduce path before starting the pipeline."""
+    text = (raw or "").strip()
+    if not text:
+        return "请输入 PDF 路径。"
+    path = Path(text).expanduser()
+    if not path.exists():
+        return f"路径不存在: {path}"
+    if not path.is_file():
+        return f"路径不是文件: {path}"
+    return None
+
+
+def review_enqueued_banner(outcome: dict | None) -> str:
+    """Honest review-queue line; do not claim reflection when the gate was elsewhere."""
+    reason = str((outcome or {}).get("reflection_status") or "").strip()
+    if reason in {"", "None"}:
+        reason = "review"
+    return f"复现完毕，已送入人工复核（{reason}）。"
 
 
 class ReportReproductionScreen(Vertical):
@@ -33,8 +91,9 @@ class ReportReproductionScreen(Vertical):
         with Vertical(id="gauge-container"):
             yield Label("复现逼真度 (Deviation Score)", id="gauge-label")
             yield ProgressBar(total=100, show_eta=False, id="deviation-gauge")
+            yield DeviationGauge(id="dev-metrics")
 
-        yield RichLog(id="repro-log", wrap=True, highlight=True, markup=True)
+        yield LogPanel(id="repro-log", wrap=True, highlight=True, markup=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "repro-run":
@@ -42,19 +101,17 @@ class ReportReproductionScreen(Vertical):
 
     def _run_reproduce(self) -> None:
         input_widget = self.query_one("#repro-input", Input)
-        log = self.query_one("#repro-log", RichLog)
+        log = self.query_one("#repro-log", LogPanel)
         gauge_container = self.query_one("#gauge-container", Vertical)
         gauge = self.query_one("#deviation-gauge", ProgressBar)
 
         raw = (input_widget.value or "").strip()
-        if not raw:
-            log.write("[bold red]请输入 PDF 路径。[/]")
+        err = reproduce_input_error(raw)
+        if err:
+            log.write(f"[bold red]{err}[/]")
             return
 
         pdf_path = Path(raw).expanduser()
-        if not pdf_path.exists():
-            log.write(f"[bold red]路径不存在:[/] {pdf_path}")
-            return
 
         log.clear()
         log.write(f"[bold green]开始复现:[/] {pdf_path.name}")
@@ -69,7 +126,7 @@ class ReportReproductionScreen(Vertical):
 
         from reproagent.pipeline import reproduce_report
 
-        log = self.query_one("#repro-log", RichLog)
+        log = self.query_one("#repro-log", LogPanel)
         gauge = self.query_one("#deviation-gauge", ProgressBar)
 
         settings = get_settings()
@@ -79,7 +136,7 @@ class ReportReproductionScreen(Vertical):
         log.write("正在上传并校验...")
         await anyio.sleep(0.5)
         gauge.advance(20)
-        log.write("启动多模态解析 (PaddleOCR + DeepSeek)...")
+        log.write(parse_stage_banner(settings))
 
         try:
             # 真实复现
@@ -97,19 +154,22 @@ class ReportReproductionScreen(Vertical):
             return
 
         # 根据结果调整进度条
+        nums = metrics_for_gauge(outcome if isinstance(outcome, dict) else None)
+        if nums:
+            self.query_one("#dev-metrics", DeviationGauge).set_deviations(nums)
+
         status = (outcome or {}).get("status")
         if status in ("passed", "converged", "success"):
             gauge.update(progress=100)
             log.write("[bold green]✓ 复现成功，因子已自动入库。[/]")
         elif status == "review_enqueued":
             gauge.update(progress=45)
-            log.write(
-                "[bold yellow]⚠ 复现完毕，但指标偏差过大，已触发 Reflection Loop 尝试修复。[/]"
-            )
-            log.write("[bold yellow]⚠ Reflection 未收敛，因子已送入人工复核队列。[/]")
+            log.write(f"[bold yellow]⚠ {review_enqueued_banner(outcome)}[/]")
         else:
             gauge.update(progress=100)
             log.write(f"复现完成 ✓（status={status}）")
 
         if outcome:
-            log.write(f"\n[dim]Pipeline 返回详情: {json.dumps(outcome, ensure_ascii=False)}[/]")
+            from reproagent.utils.jsonutil import dumps as json_dumps
+
+            log.write(f"\n[dim]Pipeline 返回详情: {json_dumps(outcome)}[/]")

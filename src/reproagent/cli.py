@@ -24,6 +24,52 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def review_reason_bucket(reason: str) -> str:
+    """Collapse per-factor review reasons so `--stats` is readable."""
+    r = (reason or "").strip()
+    if not r:
+        return "(empty)"
+    if r.startswith("No factors extracted"):
+        return "No factors extracted"
+    if r.startswith("Reflection failed"):
+        return "Reflection failed"
+    if r.startswith("Strict mode"):
+        return "Strict mode"
+    if r.startswith("Factor ") and " failed" in r:
+        return "Factor failed"
+    if r.startswith("Confidence gate"):
+        return "Confidence gate"
+    if ":" in r:
+        return r.split(":", 1)[0].strip()
+    return r[:80]
+
+
+def summarize_review_queue(pending: list[Any]) -> str:
+    """Human summary: count, age range, reason buckets."""
+    from collections import Counter
+
+    from reproagent.ingestion.review_queue import review_capability_kind
+
+    if not pending:
+        return "review: queue empty"
+    buckets = Counter(review_reason_bucket(getattr(row, "reason", "") or "") for row in pending)
+    capability_n = sum(
+        1 for row in pending if review_capability_kind(getattr(row, "reason", "") or "")
+    )
+    human_n = len(pending) - capability_n
+    lines = [
+        f"review: {len(pending)} pending ({human_n} human, {capability_n} capability)"
+    ]
+    created = [getattr(row, "created_at", None) for row in pending]
+    created = [c for c in created if c]
+    if created:
+        lines.append(f"  oldest: {min(created)}")
+        lines.append(f"  newest: {max(created)}")
+    for bucket, n in buckets.most_common():
+        lines.append(f"  {n:4d}  {bucket}")
+    return "\n".join(lines)
+
+
 @app.callback()
 def main(
     version: bool = typer.Option(
@@ -38,13 +84,43 @@ def main(
     """ReproAgent CLI。"""
 
 
+def echo_pipeline_cli(kind: str, result: Any) -> None:
+    """Print JSON; EXIT 0 for passed/partial/converged/soft_passed."""
+    status = None
+    if isinstance(result, dict):
+        status = result.get("status")
+    if result is not None:
+        try:
+            from reproagent.utils.jsonutil import dumps as json_dumps
+
+            typer.echo(json_dumps(result))
+        except Exception:  # noqa: BLE001
+            typer.echo(str(result))
+    if status in {"passed", "partial", "converged", "soft_passed"}:
+        typer.echo(f"{kind} ok (status={status})")
+        return
+    if status == "review_enqueued":
+        typer.echo(f"{kind} review_enqueued")
+        return
+    typer.echo(f"{kind} failed: status={status or 'unknown'}", err=True)
+    raise typer.Exit(code=1)
+
+
 def _build_repository() -> Any:
     """构造一个默认 Repository（初始化 DB）。"""
     from reproagent.persistence.db import get_engine, init_db
     from reproagent.persistence.repository import Repository
 
     settings = get_settings()
-    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        settings.data_dir.mkdir(parents=True, exist_ok=True)
+    except PermissionError as exc:
+        from reproagent.exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            f"data_dir is not writable: {settings.data_dir} — "
+            "fix permissions or point DATA_DIR at a writable location"
+        ) from exc
     engine = get_engine(settings.db_path)
     init_db(engine)
     return Repository(engine)
@@ -65,28 +141,44 @@ def _build_library_manager() -> Any:
 @app.command()
 def ingest(pdf_path: Path = typer.Argument(..., exists=True, dir_okay=False)) -> None:
     """摄入一篇研报：upload → validate → 持久化。"""
+    from reproagent.exceptions import ValidationError
     from reproagent.ingestion.uploader import upload_pdf
     from reproagent.ingestion.validator import validate_pdf
 
-    report = upload_pdf(pdf_path)
+    try:
+        report = upload_pdf(pdf_path)
+    except (ValidationError, FileNotFoundError, OSError) as exc:
+        typer.echo(f"ingest failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
     report = validate_pdf(report)
+
+    repo = _build_repository()
+    existing = repo.get_report_by_hash(report.file_hash)
 
     if report.validation_status == "invalid":
         typer.echo(
             f"ingest failed: validation_status=invalid errors={report.validation_errors}",
             err=True,
         )
-        try:
-            repo = _build_repository()
-            repo.save_report(report)
-            from reproagent.ingestion.review_queue import enqueue_manual_review
+        if existing is None:
+            try:
+                repo.save_report(report)
+                from reproagent.ingestion.review_queue import enqueue_manual_review
 
-            enqueue_manual_review(report, "validation_failed", repo=repo)
-        except Exception as exc:  # noqa: BLE001
-            typer.echo(f"warn: could not enqueue review: {exc}", err=True)
+                enqueue_manual_review(report, "validation_failed", repo=repo)
+            except Exception as exc:  # noqa: BLE001
+                typer.echo(f"warn: could not enqueue review: {exc}", err=True)
         raise typer.Exit(code=1)
 
-    repo = _build_repository()
+    if existing is not None:
+        typer.echo(
+            "ingest ok: "
+            f"id={existing.id} hash={existing.file_hash[:12]}… "
+            f"status={existing.validation_status} pages={existing.page_count} "
+            "(already ingested)"
+        )
+        return
+
     repo.save_report(report)
 
     typer.echo(
@@ -97,8 +189,18 @@ def ingest(pdf_path: Path = typer.Argument(..., exists=True, dir_okay=False)) ->
 
 
 @app.command()
-def reproduce(pdf_path: Path = typer.Argument(..., exists=True, dir_okay=False)) -> None:
-    """端到端：摄入 → 解析 → 复现 → 偏差 → 入库。"""
+def reproduce(
+    pdf_path: Path = typer.Argument(
+        ...,
+        exists=True,
+        dir_okay=False,
+        help="PDF 或 Markdown / 纯文本路径",
+    ),
+) -> None:
+    """端到端：摄入 → 解析 → 复现 → 偏差 → 入库。
+
+    `.md` / `.txt` 走 text 路径（跳过 PDF 解析）。
+    """
     try:
         from reproagent.pipeline import reproduce_report
     except ImportError as exc:
@@ -122,12 +224,7 @@ def reproduce(pdf_path: Path = typer.Argument(..., exists=True, dir_okay=False))
         typer.echo(f"reproduce failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
-    typer.echo("reproduce ok")
-    if result is not None:
-        try:
-            typer.echo(json.dumps(result, default=str, ensure_ascii=False))
-        except Exception:  # noqa: BLE001
-            typer.echo(str(result))
+    echo_pipeline_cli("reproduce", result)
 
 
 @app.command()
@@ -163,7 +260,11 @@ def text(
 
     # 读取输入
     if file is not None:
-        text_content = file.read_text(encoding="utf-8")
+        try:
+            text_content = file.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            typer.echo(f"text failed: not UTF-8 text: {file}", err=True)
+            raise typer.Exit(code=1) from exc
     elif not sys.stdin.isatty():
         text_content = sys.stdin.read()
     else:
@@ -196,33 +297,50 @@ def text(
         typer.echo(f"text failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
-    typer.echo("text ok")
-    if result is not None:
-        try:
-            typer.echo(json.dumps(result, default=str, ensure_ascii=False))
-        except Exception:  # noqa: BLE001
-            typer.echo(str(result))
+    echo_pipeline_cli("text", result)
 
 
 @app.command()
 def library(
     style: str | None = typer.Option(None, "--style", "-s", help="按风格过滤"),
+    query: str | None = typer.Option(None, "--query", "-q", help="按名称 / 公式搜索"),
+    limit: int = typer.Option(50, "--limit", help="最多打印条数；0 表示不截断"),
     html: bool = typer.Option(False, "--html", help="生成 HTML 仪表盘到 wiki_dir"),
+    refresh_metrics: bool = typer.Option(
+        False, "--refresh-metrics", help="从 backtest/ 产物回填空 metrics"
+    ),
 ) -> None:
     """浏览因子库。"""
     from reproagent.models.library import LibraryFilter
 
     manager = _build_library_manager()
-    filter_ = LibraryFilter(style=style) if style else None
-    entries = manager.list(filter_)
+    if refresh_metrics:
+        settings = get_settings()
+        n = manager.backfill_metrics(settings.data_dir)
+        typer.echo(f"library: refreshed metrics for {n} factor(s)")
+        # Wiki dashboard is a static file; backfill must rewrite it or IC stays 0.
+        full = manager.list()
+        if full:
+            from reproagent.library.dashboard import write_library_dashboard
 
-    if not entries:
+            out = settings.wiki_dir / "dashboard.html"
+            write_library_dashboard(full, out)
+            typer.echo(f"html dashboard -> {out}")
+    filter_ = LibraryFilter(style=style) if style else None
+    all_entries = manager.list(filter_, query=query)
+    cap = None if int(limit) == 0 else max(1, int(limit))
+    entries = all_entries if cap is None else all_entries[:cap]
+
+    if not all_entries:
         typer.echo("library: empty (0 factors)")
         if html:
             typer.echo("--html requested but library empty; skipping dashboard")
         return
 
-    typer.echo(f"library: {len(entries)} factor(s)")
+    if cap is not None and len(all_entries) > len(entries):
+        typer.echo(f"library: {len(all_entries)} factor(s), showing first {len(entries)}")
+    else:
+        typer.echo(f"library: {len(entries)} factor(s)")
     typer.echo(f"{'id':<34} {'name':<24} {'style':<12} {'status':<10} {'version':<10}")
     typer.echo("-" * 96)
     for entry in entries:
@@ -232,20 +350,16 @@ def library(
         )
 
     if html:
-        from reproagent.library.dashboard import generate_html_dashboard
+        from reproagent.library.dashboard import write_library_dashboard
 
         settings = get_settings()
         out = settings.wiki_dir / "dashboard.html"
-        factors_payload = [
-            {
-                "name": entry.factor.name,
-                "ic_series": [],
-                "excess_cum": [],
-                "stats": {},
-            }
-            for entry in entries
-        ]
-        generate_html_dashboard(factors_payload, out)
+        write_library_dashboard(all_entries, out)
+        if cap is not None and len(all_entries) > len(entries):
+            typer.echo(
+                f"html dashboard uses all {len(all_entries)} matched factors "
+                f"(print cap is {cap})"
+            )
         typer.echo(f"html dashboard -> {out}")
 
 
@@ -254,28 +368,78 @@ def review(
     list_queue: bool = typer.Option(False, "--list", "-l", help="仅列出待审项（不决策）"),
     approve: str | None = typer.Option(None, "--approve", help="批准复核条目 ID（entry_id）"),
     reject: str | None = typer.Option(None, "--reject", help="拒绝复核条目 ID（entry_id）"),
+    dismiss_capability: bool = typer.Option(
+        False,
+        "--dismiss-capability",
+        help="将系统能力失败（抽不出因子、数据源/wiki/公式引擎、反思耗尽等）标为 dismissed_capability，不 approve/reject",
+    ),
+    limit: int = typer.Option(50, "--limit", help="--list 最多打印条数"),
+    stats: bool = typer.Option(False, "--stats", help="按原因分桶统计待审队列"),
+    reason: str | None = typer.Option(
+        None, "--reason", help="仅保留 reason 含子串的待审项"
+    ),
+    human_only: bool = typer.Option(
+        False,
+        "--human-only",
+        help="--list / --stats / peek 只看需要人看的项",
+    ),
 ) -> None:
-    """处理人工复核队列：查看 / approve / reject。"""
+    """处理人工复核队列：查看 / approve / reject / 清掉系统能力噪声。"""
     from sqlmodel import Session, select
 
     from reproagent.ingestion.review_queue import (
         confirm_manual_review,
         dequeue_manual_review,
+        review_capability_kind,
     )
     from reproagent.persistence.tables import ManualReviewQueueTable
 
-    if approve and reject:
-        typer.echo("review: use only one of --approve / --reject", err=True)
+    exclusive = [bool(approve), bool(reject), bool(dismiss_capability)]
+    if sum(exclusive) > 1:
+        typer.echo(
+            "review: use only one of --approve / --reject / --dismiss-capability",
+            err=True,
+        )
         raise typer.Exit(code=1)
 
     repo = _build_repository()
 
+    if dismiss_capability:
+        from reproagent.exceptions import PersistenceError
+
+        try:
+            result = repo.dismiss_capability_reviews()
+        except PersistenceError as exc:
+            typer.echo(f"review: dismiss-capability failed: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        typer.echo(
+            "review: dismissed_capability "
+            f"{result['dismissed']}  kept {result['kept']}  "
+            f"scanned {result['scanned']}"
+        )
+        buckets = result.get("buckets") or {}
+        for kind, n in sorted(buckets.items(), key=lambda kv: (-kv[1], kv[0])):
+            typer.echo(f"  {n:4d}  {kind}")
+        return
+
     if approve:
-        confirm_manual_review(approve, "approve", repo=repo)
+        from reproagent.exceptions import PersistenceError
+
+        try:
+            confirm_manual_review(approve, "approve", repo=repo)
+        except PersistenceError as exc:
+            typer.echo(f"review: approve failed: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
         typer.echo(f"review: approved entry_id={approve}")
         return
     if reject:
-        confirm_manual_review(reject, "reject", repo=repo)
+        from reproagent.exceptions import PersistenceError
+
+        try:
+            confirm_manual_review(reject, "reject", repo=repo)
+        except PersistenceError as exc:
+            typer.echo(f"review: reject failed: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
         typer.echo(f"review: rejected entry_id={reject}")
         return
 
@@ -288,22 +452,42 @@ def review(
             .order_by(ManualReviewQueueTable.created_at)
         ).all()
 
+    if reason:
+        needle = reason.lower()
+        pending = [row for row in pending if needle in (row.reason or "").lower()]
+
+    if human_only:
+        pending = [
+            row
+            for row in pending
+            if review_capability_kind(row.reason or "") is None
+        ]
+
     if not pending:
         typer.echo("review: queue empty")
         return
 
-    typer.echo(f"review: {len(pending)} pending")
-    for row in pending if list_queue else pending[:1]:
-        typer.echo(
-            f"  entry_id={row.id} report_id={row.report_id} "
-            f"reason={row.reason} created_at={row.created_at}"
-        )
+    if stats:
+        typer.echo(summarize_review_queue(pending))
+        return
 
     if list_queue:
+        typer.echo(f"review: {len(pending)} pending")
+        cap = max(1, int(limit))
+        if len(pending) > cap:
+            typer.echo(f"review: showing first {cap} of {len(pending)}")
+        for row in pending[:cap]:
+            kind = review_capability_kind(row.reason or "")
+            tag = "human" if kind is None else f"capability:{kind}"
+            typer.echo(
+                f"  [{tag}] entry_id={row.id} report_id={row.report_id} "
+                f"reason={row.reason} created_at={row.created_at}"
+            )
         return
 
     item = dequeue_manual_review(repo=repo)
     if item is None:
+        typer.echo("review: queue empty")
         return
     entry_id, report, reason = item
     typer.echo(
@@ -398,6 +582,34 @@ def benchmark(
             for r in reports:
                 if r.get("status") == "validated":
                     typer.echo(f"- **{r['report_id']}**: {r.get('report_title', '')}")
+        settings = get_settings()
+        results_root = settings.data_dir / "benchmark"
+        typer.echo()
+        typer.echo("## Last run results")
+        found = False
+        if results_root.is_dir():
+            for r in reports:
+                rid = r.get("report_id")
+                if not rid:
+                    continue
+                path = results_root / str(rid) / "result.json"
+                if not path.exists():
+                    continue
+                found = True
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:  # noqa: BLE001
+                    typer.echo(f"- **{rid}**: unreadable {path}")
+                    continue
+                summary = data.get("summary") or {}
+                typer.echo(
+                    f"- **{rid}**: status={data.get('status')} "
+                    f"passed={summary.get('passed', 0)} "
+                    f"failed={summary.get('failed', 0)} "
+                    f"errors={summary.get('errors', 0)}"
+                )
+        if not found:
+            typer.echo("- (no result.json yet; run --run or --run-all)")
         return
 
     if run:
@@ -421,7 +633,9 @@ def benchmark(
                 settings = settings.model_copy(update={"local_data_path": local})
 
         result = run_benchmark(run, settings, benchmark_dir=benchmark_dir)
-        typer.echo(json.dumps(result, default=str, ensure_ascii=False, indent=2))
+        from reproagent.utils.jsonutil import dumps as json_dumps
+
+        typer.echo(json_dumps(result, indent=2))
         summary = result.get("summary") or {}
         if result.get("status") not in {"passed", "partial"}:
             raise typer.Exit(code=1)
@@ -448,7 +662,9 @@ def benchmark(
 
         typer.echo(f"benchmark: running {len(ready)} report(s)")
         result = run_benchmark_all(settings, benchmark_dir=benchmark_dir)
-        typer.echo(json.dumps(result, default=str, ensure_ascii=False, indent=2))
+        from reproagent.utils.jsonutil import dumps as json_dumps
+
+        typer.echo(json_dumps(result, indent=2))
         if result.get("status") == "error":
             raise typer.Exit(code=1)
         return
@@ -472,5 +688,5 @@ def mcp() -> None:
         server.run()
     except ImportError as e:
         typer.echo(f"MCP server unavailable: {e}", err=True)
-        typer.echo("Install with: pip install fastmcp", err=True)
+        typer.echo("Install with: uv sync --extra mcp", err=True)
         raise typer.Exit(code=1)

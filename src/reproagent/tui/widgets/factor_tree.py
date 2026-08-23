@@ -8,5 +8,5 @@ from textual.widgets import Tree
 class FactorTree(Tree[str]):
     """按风格 / 标签组织的因子树。"""
 
-    def __init__(self) -> None:
-        super().__init__("因子库")
+    def __init__(self, label: str = "所有因子", **kwargs) -> None:  # noqa: ANN003
+        super().__init__(label, **kwargs)

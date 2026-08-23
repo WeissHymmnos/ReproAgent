@@ -7,11 +7,25 @@ from textual.binding import Binding
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
 
+def tui_subtitle() -> str:
+    """Build the header subtitle from the command catalog + key bindings."""
+    from reproagent.tui.commands import COMMANDS
+
+    keys = {"reproduce": "r", "library": "l", "review": "v"}
+    parts = ["研报因子复现系统"]
+    for spec in COMMANDS:
+        key = keys.get(spec.id)
+        if key:
+            parts.append(f"{key} {spec.title}")
+    parts.append("q 退出")
+    return " · ".join(parts)
+
+
 class ReproAgentApp(App[None]):
     """ReproAgent TUI 主应用。"""
 
     TITLE = "ReproAgent"
-    SUB_TITLE = "研报因子复现系统"
+    SUB_TITLE = tui_subtitle()
     BINDINGS = [
         Binding("q", "quit", "退出"),
         Binding("d", "toggle_dark", "深色/浅色"),

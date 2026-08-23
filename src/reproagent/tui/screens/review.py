@@ -75,17 +75,21 @@ class ManualReviewScreen(Static):
             init_db(engine)
             repo = Repository(engine)
 
+            from reproagent.cli import summarize_review_queue
+
             with Session(engine) as session:
                 pending = session.exec(
-                    select(ManualReviewQueueTable).where(ManualReviewQueueTable.status == "pending")
+                    select(ManualReviewQueueTable)
+                    .where(ManualReviewQueueTable.status == "pending")
+                    .order_by(ManualReviewQueueTable.created_at)
                 ).all()
                 count = len(pending)
 
             if count == 0:
                 return 0, "复核队列为空（0 项待审）", None
 
+            text = summarize_review_queue(pending) + "\n"
             item = dequeue_manual_review(repo=repo)
-            text = f"队列待审: {count} 项\n"
             head_id: str | None = None
             if item is not None:
                 entry_id, report, reason = item
