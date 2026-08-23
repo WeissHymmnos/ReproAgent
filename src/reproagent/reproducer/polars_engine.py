@@ -46,6 +46,17 @@ def _get_int(n: Any, op_name: str = "Operator", *, default: int = 20) -> int:
         raise ValueError(f"Invalid period value '{n}' for {op_name}.") from exc
 
 
+def _reject_lookahead_window(n: Any, op_name: str) -> int:
+    """滞后窗口必须 >= 0；负窗口即引用未来数据，直接拒绝。"""
+    window = _get_int(n, op_name)
+    if window < 0:
+        raise ValueError(
+            f"{op_name}() negative window ({window}) references future data "
+            f"(lookahead bias) and is rejected."
+        )
+    return window
+
+
 def Mean(x: Any, n: Any = None) -> Any:
     if isinstance(x, (int, float)):
         return pl.lit(float(x))
@@ -75,13 +86,13 @@ def Sum(x: Any, n: Any = None) -> Any:
 def Ref(x: Any, n: Any) -> Any:
     if isinstance(x, (int, float)):
         return pl.lit(float(x))
-    return x.shift(_get_int(n, "Ref")).over("asset")
+    return x.shift(_reject_lookahead_window(n, "Ref")).over("asset")
 
 
 def Delta(x: Any, n: Any) -> Any:
     if isinstance(x, (int, float)):
         return pl.lit(0.0)
-    return (x - x.shift(_get_int(n, "Delta"))).over("asset")
+    return (x - x.shift(_reject_lookahead_window(n, "Delta"))).over("asset")
 
 
 def _ensure_expr(x: Any) -> Any:
@@ -585,6 +596,17 @@ class _ColFallback(dict):
         return pl.col(key)
 
 
+def _numeric_constant(node: ast.AST) -> int | float | None:
+    """Resolve AST numeric constants including unary minus (``-1``)."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        inner = _numeric_constant(node.operand)
+        if inner is not None:
+            return -inner
+    return None
+
+
 def validate_expression(expr: str) -> dict:
     """静态校验因子表达式的安全性和正确性。
 
@@ -629,15 +651,23 @@ def validate_expression(expr: str) -> dict:
                 func_name = node.func.id
                 if func_name not in _OPERATOR_WHITELIST:
                     self.errors.append(f"Unknown operator: '{func_name}'")
-                # Ref 负窗口检查
-                if func_name in ("Ref", "Delta") and len(node.args) >= 2:
-                    arg1 = node.args[1]
-                    if isinstance(arg1, ast.Constant) and isinstance(arg1.value, (int, float)):
-                        if arg1.value < 0:
-                            self.errors.append(
-                                f"{func_name} with negative window ({arg1.value}): "
-                                f"this references future data"
-                            )
+                # Ref 负窗口检查（-1 is UnaryOp, not Constant）
+                if func_name in ("Ref", "Delta", "shift") and len(node.args) >= 2:
+                    window_val = _numeric_constant(node.args[1])
+                    if window_val is not None and window_val < 0:
+                        self.errors.append(
+                            f"{func_name} with negative window ({window_val}): "
+                            f"this references future data"
+                        )
+                    if node.args:
+                        first = node.args[0]
+                        if not isinstance(first, ast.Name):
+                            self.visit(first)
+                    for extra in node.args[1:]:
+                        self.visit(extra)
+                    for kw in node.keywords:
+                        self.visit(kw)
+                    return
                 # Corr/Cov 自相关检查
                 if func_name in ("Corr", "Cov", "Correlation") and len(node.args) >= 2:
                     a1 = ast.dump(node.args[0])
@@ -675,6 +705,22 @@ def validate_expression(expr: str) -> dict:
     }
 
 
+def _drop_duplicate_rows(
+    factor_values: pl.DataFrame, factor_def: FactorDefinition
+) -> pl.DataFrame:
+    """(date, asset) 重复行会虚增 IC/换手，输出前强制去重。"""
+    deduped = factor_values.unique(subset=["date", "asset"], keep="first", maintain_order=True)
+    dropped = factor_values.height - deduped.height
+    if dropped:
+        logging.getLogger(__name__).warning(
+            "Dropped %d duplicated (date, asset) rows in factor values for %s "
+            "(duplicate input panel rows silently distort metrics)",
+            dropped,
+            factor_def.name,
+        )
+    return deduped
+
+
 class PolarsEngine:
     """实现 FactorEngine Protocol。用 AST 解析并用 Polars 算子动态求值。"""
 
@@ -709,6 +755,19 @@ class PolarsEngine:
             data = data.rename({"trade_date": "date"})
         if "ts_code" in data.columns and "asset" not in data.columns:
             data = data.rename({"ts_code": "asset"})
+
+        sort_cols = [c for c in ("asset", "date") if c in data.columns]
+        if len(sort_cols) == 2:
+            data = data.sort(sort_cols)
+            deduped_input = data.unique(subset=sort_cols, keep="first").sort(sort_cols)
+            if deduped_input.height != data.height:
+                logging.getLogger(__name__).warning(
+                    "Input panel had %d duplicated (%s) rows; deduplicated before "
+                    "evaluation (duplicate rows pollute rolling/shift windows)",
+                    data.height - deduped_input.height,
+                    ", ".join(sort_cols),
+                )
+                data = deduped_input
 
         formula = factor_def.formula
 
@@ -755,14 +814,25 @@ class PolarsEngine:
                 cols_to_drop = [c for c in tmp_cols if c in df.columns]
                 if cols_to_drop:
                     df = df.drop(cols_to_drop)
-                return df.drop_nulls()
+                df = _drop_duplicate_rows(df, factor_def)
+                return df.drop_nulls().filter(pl.col("factor_value").is_finite())
             raise FormulaError(f"Factor formula evaluation failed for {formula!r}: {e}") from e
 
         cols_to_drop = [c for c in tmp_cols if c in df.columns]
         if cols_to_drop:
             df = df.drop(cols_to_drop)
 
-        return df.select(["date", "asset", "factor_value"]).drop_nulls()
+        result = df.select(["date", "asset", "factor_value"]).drop_nulls()
+        result = _drop_duplicate_rows(result, factor_def)
+        finite = result.filter(pl.col("factor_value").is_finite())
+        dropped_non_finite = result.height - finite.height
+        if dropped_non_finite:
+            logging.getLogger(__name__).warning(
+                "Dropped %d non-finite factor values (inf/nan) for %s",
+                dropped_non_finite,
+                factor_def.name,
+            )
+        return finite
 
     def _eval_ast_node(
         self,

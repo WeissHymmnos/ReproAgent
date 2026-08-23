@@ -89,13 +89,13 @@ class TestUnlaggedPriceWarning:
         assert any(field in w.description for w in warnings)
 
     def test_ref_lagged_close_no_extra_warning(self) -> None:
-        """Ref(close, 1) 已经滞后，但 close 在 Ref 内部作为参数仍会触发
-        AST Name 访问器的警告。这是预期行为——AST 遍历器对所有 Name('close')
-        都会发 warning，包括作为 Ref 参数的。用户可以通过配置决定是否忽略。"""
+        """Ref(close, 1) is already lagged; the inner Name must not be unlagged."""
         report = detect_lookahead("Ref(close, 1)")
-        # 即使有 warning，也没有 error
         errors = [f for f in report.findings if f.severity == "error"]
         assert len(errors) == 0
+        unlagged = [f for f in report.findings if f.rule == "unlagged_price"]
+        assert unlagged == []
+        assert report.risk_level == "none"
 
 
 class TestSyntaxErrorHandling:
@@ -142,6 +142,13 @@ class TestRiskLevelAssignment:
         warnings = [f for f in report.findings if f.severity == "warning"]
         # 至少有一个（裸 close）
         assert len(warnings) >= 1
+        assert report.risk_level == "low"
+
+    def test_momentum_has_one_unlagged_not_two(self) -> None:
+        """close / Ref(close, 5) - 1: only the contemporaneous close is unlagged."""
+        report = detect_lookahead("close / Ref(close, 5) - 1")
+        unlagged = [f for f in report.findings if f.rule == "unlagged_price"]
+        assert len(unlagged) == 1
         assert report.risk_level == "low"
 
 

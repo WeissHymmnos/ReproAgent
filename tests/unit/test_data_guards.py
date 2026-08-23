@@ -177,6 +177,27 @@ class TestFilterLimitHit:
         assert down == 0
         assert len(result) == 2
 
+    def test_first_bar_without_pre_close_is_kept(self) -> None:
+        """Shifted pre_close is null on day 1; that is not a limit-up/down hit."""
+        config = DataGuardConfig()
+        df = pl.DataFrame(
+            {
+                "trade_date": [
+                    date(2023, 1, 2),
+                    date(2023, 1, 3),
+                    date(2023, 1, 2),
+                    date(2023, 1, 3),
+                ],
+                "ts_code": ["000001.SZ", "000001.SZ", "600000.SH", "600000.SH"],
+                "close": [10.0, 10.05, 15.0, 15.04],
+            }
+        )
+        result, up, down = _filter_limit_hit(df, config)
+        assert up == 0
+        assert down == 0
+        assert len(result) == 4
+        assert result["trade_date"].to_list().count(date(2023, 1, 2)) == 2
+
 
 # ── adjustment validation ──
 
@@ -253,3 +274,28 @@ class TestApplyGuards:
         )
         result, stats = apply_guards(df, config)
         assert stats.total_after == stats.total_before - stats.st_removed - stats.suspended_removed
+
+    def test_apply_guards_accounts_for_fixture_first_session(self) -> None:
+        from pathlib import Path
+
+        path = Path("tests/fixtures/test_data/prices.parquet")
+        if not path.exists():
+            import pytest
+
+            pytest.skip("fixture prices.parquet missing")
+        df = pl.read_parquet(path)
+        result, stats = apply_guards(df)
+        accounted = (
+            stats.st_removed
+            + stats.suspended_removed
+            + stats.new_listing_removed
+            + stats.limit_up_removed
+            + stats.limit_down_removed
+        )
+        assert stats.total_after == stats.total_before - accounted
+        assert stats.total_after == result.height
+        # Session-1 rows must survive when they are not actual limit hits.
+        first = df["trade_date"].min()
+        assert result.filter(pl.col("trade_date") == first).height == df.filter(
+            pl.col("trade_date") == first
+        ).height

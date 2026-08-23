@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import date
 from pathlib import Path
@@ -49,8 +50,35 @@ _NAMED_UNIVERSE_INDEX: dict[str, str] = {
 _RQ_PRICE_CACHE: dict[tuple[str, str, str], pl.DataFrame] = {}
 _RQ_INITED = False
 # 磁盘缓存目录（跨 CLI 子进程复用）
-_RQ_DISK_CACHE_DIR = Path.home() / ".reproagent" / "cache" / "ricequant_prices"
-_RQ_INST_CACHE_DIR = Path.home() / ".reproagent" / "cache" / "ricequant_instruments"
+def _rq_cache_roots() -> tuple[Path, Path]:
+    """Resolve RiceQuant disk cache dirs at call time so FINAINCE_HOME wins."""
+    home = Path.home() / ".reproagent" / "cache"
+    raw = (os.environ.get("FINAINCE_HOME") or "").strip()
+    if raw:
+        home = Path(raw).expanduser() / "reproagent" / "cache"
+    return home / "ricequant_prices", home / "ricequant_instruments"
+
+
+def _pandas_to_polars(df: Any) -> pl.DataFrame:
+    """Convert a RiceQuant pandas frame without requiring pyarrow.
+
+    rqdatac often emits pandas nullable dtypes (Int64/Float64). Polars'
+    ``from_pandas`` then asks for pyarrow. Coerce those columns first.
+    """
+    try:
+        return pl.from_pandas(df)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("pl.from_pandas failed (%s); coercing nullable dtypes", exc)
+    coerced = df.copy()
+    for col in list(coerced.columns):
+        dtype = str(coerced[col].dtype)
+        if dtype in {"Int64", "Int32", "UInt64", "UInt32", "Float64", "Float32"}:
+            coerced[col] = coerced[col].astype("float64")
+        elif dtype in {"boolean", "Boolean"}:
+            coerced[col] = coerced[col].astype("object")
+        elif dtype in {"string", "String"}:
+            coerced[col] = coerced[col].astype("object")
+    return pl.from_pandas(coerced)
 
 
 def is_cb_universe(universe: str | list[str]) -> bool:
@@ -119,24 +147,34 @@ class DataLoader:
         if self.settings.rq_pass is not None:
             password = self.settings.rq_pass.get_secret_value().strip()
 
-        try:
-            if token:
-                # 与 aiminer / 官方 license 连接方式一致
+        last_err: Exception | None = None
+        if token:
+            try:
                 rqdatac.init(
                     uri=f"tcp://license:{token}@rqdatad-pro.ricequant.com:16011"
                 )
-            elif user and password:
+                _RQ_INITED = True
+                return rqdatac
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+                logger.warning("rqdatac token/uri init failed: %s; trying user/pass", exc)
+        if user and password:
+            try:
                 rqdatac.init(user, password)
-            else:
-                # 尝试环境默认（部分环境已 export）
-                rqdatac.init()
+                _RQ_INITED = True
+                return rqdatac
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+        try:
+            rqdatac.init()
             _RQ_INITED = True
-        except Exception as e:
-            raise ConfigurationError(
-                "Failed to initialize rqdatac. Set RQ_TOKEN or RQ_USER+RQ_PASS "
-                f"(from aiminer ricequant account). Underlying error: {e}"
-            ) from e
-        return rqdatac
+            return rqdatac
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+        raise ConfigurationError(
+            "Failed to initialize rqdatac. Set RQ_TOKEN or RQ_USER+RQ_PASS "
+            f"(from aiminer ricequant account). Underlying error: {last_err}"
+        ) from last_err
 
     def _resolve_ricequant_instruments(
         self, universe: str | list[str], as_of: date
@@ -184,10 +222,11 @@ class DataLoader:
             # 磁盘缓存成分，避免 50 次 CLI 子进程打爆 rq 配额
             import json as _json
 
-            _RQ_INST_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            _price_dir, inst_dir = _rq_cache_roots()
+            inst_dir.mkdir(parents=True, exist_ok=True)
             # 按月粒度缓存（as_of 年月）
             stamp = f"{as_of.year:04d}{as_of.month:02d}"
-            inst_path = _RQ_INST_CACHE_DIR / f"{index_id.replace('.', '_')}_{stamp}.json"
+            inst_path = inst_dir / f"{index_id.replace('.', '_')}_{stamp}.json"
             if inst_path.exists():
                 try:
                     cached = _json.loads(inst_path.read_text(encoding="utf-8"))
@@ -209,7 +248,7 @@ class DataLoader:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("index_components(%s) failed: %s; trying latest", index_id, exc)
                 # 任意历史缓存兜底
-                for p in sorted(_RQ_INST_CACHE_DIR.glob(f"{index_id.replace('.', '_')}*.json")):
+                for p in sorted(inst_dir.glob(f"{index_id.replace('.', '_')}*.json")):
                     try:
                         cached = _json.loads(p.read_text(encoding="utf-8"))
                         if isinstance(cached, list) and cached:
@@ -358,11 +397,20 @@ class DataLoader:
         # 命名 universe（all / 指数 / 转债）不按代码过滤；列表则按代码过滤
         named = {
             "all",
+            "local_panel",
             "csi300",
+            "hs300",
+            "沪深300",
             "csi500",
+            "zz500",
+            "中证500",
             "csi1000",
+            "中证1000",
             "全a股",
             "全A股",
+            "全a",
+            "a股",
+            "全市场",
             *{a.lower() for a in _CB_UNIVERSE_ALIASES},
         }
         if isinstance(universe, str):
@@ -378,6 +426,26 @@ class DataLoader:
         if missing:
             raise ReproductionError(f"Local data missing required columns: {missing}")
 
+        deduped = df.unique(subset=["trade_date", "ts_code"], keep="first")
+        n_dup = df.height - deduped.height
+        if n_dup:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Local price panel contained %d duplicated (trade_date, ts_code) rows; "
+                "keeping first occurrence to avoid distorted IC/backtest metrics",
+                n_dup,
+            )
+            df = deduped
+
+        df = df.sort(["ts_code", "trade_date"])
+        if df.height == 0:
+            raise ReproductionError(
+                f"Local price panel is EMPTY for universe={universe!r} in "
+                f"[{start} .. {end}] from {data_path} — the requested window/"
+                f"universe does not intersect the data. Check LOCAL_DATA_PATH, "
+                f"backtest dates, or universe name."
+            )
         return df
 
     def _empty_price_frame(self) -> pl.DataFrame:
@@ -415,7 +483,8 @@ class DataLoader:
             import hashlib
 
             digest = hashlib.sha256(inst_key.encode()).hexdigest()[:24]
-            disk_path = _RQ_DISK_CACHE_DIR / f"{digest}.parquet"
+            price_dir, _inst_dir = _rq_cache_roots()
+            disk_path = price_dir / f"{digest}.parquet"
             if disk_path.exists():
                 try:
                     pldf = pl.read_parquet(disk_path)
@@ -471,7 +540,7 @@ class DataLoader:
 
             df = df.rename(columns=col_map)
 
-            pldf = pl.from_pandas(df)
+            pldf = _pandas_to_polars(df)
             if "trade_date" in pldf.columns and pldf.schema["trade_date"] == pl.Datetime:
                 pldf = pldf.with_columns(pl.col("trade_date").dt.date())
             # 保证 amount 列存在
@@ -483,7 +552,7 @@ class DataLoader:
 
             _RQ_PRICE_CACHE[cache_key] = pldf
             try:
-                _RQ_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                price_dir.mkdir(parents=True, exist_ok=True)
                 pldf.write_parquet(disk_path)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("ricequant disk cache write failed: %s", exc)
@@ -512,8 +581,9 @@ class DataLoader:
     ) -> pl.DataFrame | None:
         """配额耗尽时选用磁盘上行数最多的量价面板并按日期切片。"""
         try:
+            price_dir, _inst_dir = _rq_cache_roots()
             paths = sorted(
-                _RQ_DISK_CACHE_DIR.glob("*.parquet"),
+                price_dir.glob("*.parquet"),
                 key=lambda p: p.stat().st_size,
                 reverse=True,
             )
@@ -577,7 +647,7 @@ class DataLoader:
                     col_map["order_book_id"] = "ts_code"
                 if col_map:
                     fdf = fdf.rename(columns=col_map)
-                mpdf = pl.from_pandas(fdf)
+                mpdf = _pandas_to_polars(fdf)
                 if "trade_date" in mpdf.columns and mpdf.schema["trade_date"] == pl.Datetime:
                     mpdf = mpdf.with_columns(pl.col("trade_date").dt.date())
                 if rq_name not in mpdf.columns:
@@ -661,7 +731,7 @@ class DataLoader:
         }
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
 
-        pldf = pl.from_pandas(df)
+        pldf = _pandas_to_polars(df)
         if "trade_date" in pldf.columns and pldf.schema["trade_date"] == pl.Datetime:
             pldf = pldf.with_columns(pl.col("trade_date").dt.date())
 
@@ -732,7 +802,7 @@ class DataLoader:
             )
         combined = pd.concat(dfs, ignore_index=True)
 
-        pldf = pl.from_pandas(combined)
+        pldf = _pandas_to_polars(combined)
 
         if "trade_date" in pldf.columns:
             pldf = pldf.with_columns(pl.col("trade_date").str.strptime(pl.Date, "%Y%m%d"))
@@ -924,7 +994,7 @@ class DataLoader:
                         if len(sdf.columns) == 3
                         else sdf.columns.tolist()
                     )
-                    frames.append(pl.from_pandas(sdf))
+                    frames.append(_pandas_to_polars(sdf))
             except Exception:
                 continue
 
@@ -985,7 +1055,7 @@ class DataLoader:
                     fields=f"ts_code,trade_date,{','.join(daily_fields)}",
                 )
                 if df is not None and not df.empty:
-                    pldf = pl.from_pandas(df)
+                    pldf = _pandas_to_polars(df)
                     pldf = pldf.with_columns(pl.col("trade_date").str.strptime(pl.Date, "%Y%m%d"))
                     # 反向映射回规范名
                     rev_map = {v: k for k, v in ts_daily_map.items() if v in pldf.columns}
@@ -1021,7 +1091,7 @@ class DataLoader:
                     fields=f"ts_code,end_date,{','.join(fina_fields)}",
                 )
                 if df is not None and not df.empty:
-                    pldf = pl.from_pandas(df)
+                    pldf = _pandas_to_polars(df)
                     if "end_date" in pldf.columns:
                         pldf = pldf.with_columns(
                             pl.col("end_date").str.strptime(pl.Date, "%Y%m%d").alias("trade_date")
@@ -1082,7 +1152,7 @@ class DataLoader:
                     **{f"${f}": f for f in fields},
                 }
             )
-            return pl.from_pandas(df)
+            return _pandas_to_polars(df)
         except ImportError:
             raise ConfigurationError("qlib is not installed.")
         except Exception:

@@ -37,6 +37,9 @@ _FORBIDDEN_NAMES: set[str] = {
     "print",
 }
 
+_MAX_SOURCE_CHARS = 10_000
+_MAX_AST_NODES = 1_000
+
 
 class UnsafeExpressionError(ValueError):
     """表达式违反安全求值策略。"""
@@ -66,6 +69,15 @@ class _SecurityVisitor(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         if isinstance(node.func, ast.Name) and node.func.id in _FORBIDDEN_NAMES:
             raise UnsafeExpressionError(f"Call to '{node.func.id}' is forbidden")
+        if isinstance(node.func, ast.Attribute) and node.func.attr in (
+            "format",
+            "format_map",
+        ):
+            # format 模板里的 {0.__class__} 属性遍历发生在运行时，AST 审计不可见
+            raise UnsafeExpressionError(
+                "str.format/format_map calls are forbidden "
+                "(runtime attribute traversal bypasses AST audit)"
+            )
         self.generic_visit(node)
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
@@ -85,9 +97,18 @@ def safe_compile(
 ) -> Any:
     """解析（如需要）、安全检查、编译表达式。"""
     if isinstance(source, str):
+        if len(source) > _MAX_SOURCE_CHARS:
+            raise UnsafeExpressionError(
+                f"expression exceeds {_MAX_SOURCE_CHARS} characters"
+            )
         tree = ast.parse(source, mode=mode)
     else:
         tree = source
+    node_count = sum(1 for _ in ast.walk(tree))
+    if node_count > _MAX_AST_NODES:
+        raise UnsafeExpressionError(
+            f"expression exceeds {_MAX_AST_NODES} AST nodes ({node_count})"
+        )
     assert_safe_ast(tree)
     ast.fix_missing_locations(tree)
     return compile(tree, filename=filename, mode=mode)
