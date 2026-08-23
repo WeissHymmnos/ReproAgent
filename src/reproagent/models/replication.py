@@ -21,6 +21,20 @@ class BacktestParams(BaseModel):
     num_groups: int = 5
     transaction_cost_bps: float = 3.0
 
+    # 策略模式新增参数
+    mode: Literal["factor", "strategy"] = "factor"
+    strategy_mode: Literal["cross_sectional", "time_series"] = "cross_sectional"
+    direction: Literal["long_only", "long_short", "long_flat"] = "long_short"
+    selection_rule: Literal["top_n", "bottom_n", "top_bottom_n", "threshold"] = "top_bottom_n"
+    top_n: int | None = None
+    bottom_n: int | None = None
+    long_threshold: float | None = None
+    short_threshold: float | None = None
+    exit_threshold: float | None = None
+    max_weight_per_position: float | None = None
+    max_positions: int | None = None
+    min_holding_days: int = 1
+
 
 class ReplicationConfig(BaseModel):
     """一次复现的完整配置，可导出为 config.yaml。"""

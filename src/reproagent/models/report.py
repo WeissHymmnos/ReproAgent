@@ -20,7 +20,7 @@ class ResearchReport(BaseModel):
     broker: str | None = None  # 如 "中信证券", "国泰君安"
     report_date: date | None = None
     page_count: int
-    validation_status: Literal["pending", "valid", "invalid"] = "pending"
+    validation_status: Literal["pending", "valid", "invalid", "synthetic"] = "pending"
     validation_errors: list[str] = Field(default_factory=list)
     ingested_at: datetime  # UTC
 

@@ -21,7 +21,15 @@ class Settings(BaseSettings):
 
     # LLM
     llm_provider: Literal["openai", "anthropic"] = "anthropic"
-    llm_api_key: SecretStr = Field(default=SecretStr(""))
+    llm_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias=AliasChoices(
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "llm_api_key",
+            "LLM_API_KEY",
+        ),
+    )
     llm_base_url: str | None = None
     llm_model: str = "claude-sonnet-4-5"
     llm_vision_model: str = "claude-sonnet-4-5"
@@ -31,10 +39,12 @@ class Settings(BaseSettings):
     # Parser
     parser_backend: Literal["finpdfpro", "marker", "llamaparse", "mineru"] = "finpdfpro"
     parser_version: str = "1.0.0"
-    finpdfpro_mode: Literal["fast", "balanced", "max-quality"] = "balanced"
+    finpdfpro_profile: Literal["auto", "lite", "balanced", "quality"] = "balanced"
+    finpdfpro_mode: Literal["fast", "balanced", "max-quality"] | None = None
     finpdfpro_vlm_backend: Literal[
         "none", "paddle_vl", "smolvlm", "edge", "hybrid", "llamacpp_http"
     ] = "none"
+    finpdfpro_formula_backend: Literal["none", "l0", "l1", "pix2text", "auto"] = "l1"
 
     # Data
     data_source: Literal["ricequant", "qlib", "local", "tushare"] = "local"
@@ -71,6 +81,10 @@ class Settings(BaseSettings):
 
     # TUI
     tui_theme: str = "dark"
+
+    # Research memory
+    memory_enabled: bool = True
+    skip_mock_reflection: bool = False
 
     @property
     def is_prod(self) -> bool:

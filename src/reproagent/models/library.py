@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -24,6 +24,7 @@ class FactorLibraryEntry(BaseModel):
     dedup_hash: str  # sha256(formula + sorted(input_fields))
     tags: list[str] = Field(default_factory=list)
     created_at: datetime
+    metrics: dict[str, Any] = Field(default_factory=dict)
 
 
 class LibraryFilter(BaseModel):
