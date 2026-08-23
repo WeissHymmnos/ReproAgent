@@ -125,9 +125,13 @@ def _filter_limit_hit(df: pl.DataFrame, config: DataGuardConfig) -> tuple[pl.Dat
         )
         up_mask = pl.col("_daily_return") > config.limit_up_threshold
         down_mask = pl.col("_daily_return") < config.limit_down_threshold
-        up_removed = len(df.filter(up_mask))
-        down_removed = len(df.filter(down_mask))
-        df = df.filter(~up_mask & ~down_mask)
+        # Null return (first bar / missing pre_close) is not a limit hit; Polars
+        # filter() drops null predicates, which silently deleted session-1 rows.
+        up_hit = up_mask.fill_null(False)
+        down_hit = down_mask.fill_null(False)
+        up_removed = int(df.select(up_hit.sum()).item() or 0)
+        down_removed = int(df.select(down_hit.sum()).item() or 0)
+        df = df.filter(~(up_hit | down_hit))
         df = df.drop("_daily_return")
 
     # 清理临时列

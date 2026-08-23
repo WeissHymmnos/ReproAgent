@@ -295,12 +295,11 @@ def prob_backtest_overfitting(
     is_arr = np.array(is_sharpes)
     oos_arr = np.array(oos_sharpes)
 
-    # Kendall tau between IS rank and OOS rank
-    from scipy.stats import kendalltau
+    from reproagent.reproducer.metrics import kendall_tau_pairs
 
     is_ranks = np.argsort(np.argsort(is_arr))
     oos_ranks = np.argsort(np.argsort(oos_arr))
-    tau, _ = kendalltau(is_ranks, oos_ranks)
+    tau = kendall_tau_pairs(is_ranks, oos_ranks)
 
     # PBO ≈ (1 - tau) / 2
     pbo = (1.0 - max(tau, -1.0)) / 2.0

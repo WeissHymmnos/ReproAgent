@@ -69,13 +69,16 @@ class _LookaheadVisitor(ast.NodeVisitor):
                             severity="error",
                         )
                     )
-
-        # 检查裸 close/open/high/low 调用（未通过 Ref 滞后）
-        if func_name is None and len(node.args) >= 1:
-            first_arg = node.args[0]
-            if isinstance(first_arg, ast.Name) and first_arg.id in _PRICE_FIELDS_REQUIRING_LAG:
-                # 检查是否在第一层就使用了 close 等
-                pass  # 主检测在 visit_Name 中处理
+            # First arg is the lagged series: a bare Name is not "unlagged".
+            if node.args:
+                first = node.args[0]
+                if not isinstance(first, ast.Name):
+                    self.visit(first)
+            for extra in node.args[1:]:
+                self.visit(extra)
+            for kw in node.keywords:
+                self.visit(kw)
+            return
 
         self.generic_visit(node)
 
