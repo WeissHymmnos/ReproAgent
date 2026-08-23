@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from reproagent.models.factor_spec import ParsedFactorSpec
 from reproagent.models.replication import ReplicationConfig
 from reproagent.models.report import ResearchReport
@@ -42,6 +44,7 @@ class ReportParser:
         self,
         specs: list[ParsedFactorSpec],
         report: ResearchReport,
+        backtest_kwargs: dict[str, Any] | None = None,
     ) -> ReplicationConfig:
         """委托 ConfigBuilder。"""
-        return self.config_builder.build_config(specs, report)
+        return self.config_builder.build_config(specs, report, backtest_kwargs=backtest_kwargs)

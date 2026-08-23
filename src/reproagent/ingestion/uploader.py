@@ -28,7 +28,10 @@ def upload_pdf(file_path: Path) -> ResearchReport:
         raise ValidationError(f"Path is not a file: {file_path}")
 
     file_hash = sha256_file(resolved)
-    page_count = get_page_count(resolved)
+    try:
+        page_count = get_page_count(resolved)
+    except ValidationError:
+        page_count = 0
 
     return ResearchReport(
         id=uuid4().hex,
