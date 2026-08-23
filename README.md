@@ -1,190 +1,114 @@
-# ReproAgent 1.0
+# ReproAgent
 
-> 卖方研报 → AI 解析 → 因子复现 → 偏差自愈 → 因子库
+把卖方研报里的因子自动复现出来。喂一篇 PDF 研报(或者现成的 Markdown),
+它解析出因子定义,在本地数据上跑回测,跟研报声称的指标对偏差;
+对不上就按根因改公式重试,最多三次,还不行就进人工复核。
+跑通的因子沉淀到本地因子库。
 
-ReproAgent 是面向中国 A 股 / 转债市场的量化研报因子自动复现系统。
-上传 PDF 卖方研报（或已解析 Markdown），自动提取因子定义、计算因子值、回测验证、偏差诊断与自愈修复，最终沉淀为结构化因子库。
+面向 A 股和转债市场。单机单用户,SQLite 加 Parquet 存储,不需要部署任何服务。
 
-## 快速开始
+## 上手
 
-```bash
-# 安装
-git clone <repo-url> && cd reproagent
-uv sync --extra dev
+需要 Python 3.12+,包管理用 uv。
 
-# 离线体验（无需 LLM API Key）
-OPENAI_API_KEY= ANTHROPIC_API_KEY= DATA_SOURCE=local \
-  LOCAL_DATA_PATH=tests/fixtures/test_data \
-  uv run reproagent reproduce tests/fixtures/sample_reports/minimal.pdf
+    git clone <repo-url> && cd reproagent
+    uv sync --extra dev
 
-# 基准全链路（ground_truth，不依赖 LLM）
-DATA_SOURCE=local LOCAL_DATA_PATH=tests/fixtures/test_data \
-  uv run reproagent benchmark --run minimal
+离线体验,不需要任何 API key:
 
-DATA_SOURCE=local LOCAL_DATA_PATH=tests/fixtures/test_data \
-  uv run reproagent benchmark --run cb-factor-investing
+    OPENAI_API_KEY= ANTHROPIC_API_KEY= DATA_SOURCE=local \
+      LOCAL_DATA_PATH=tests/fixtures/test_data \
+      uv run reproagent reproduce tests/fixtures/sample_reports/minimal.pdf
 
-# 从 Markdown 复现（跳过 PDF）
-uv run reproagent text -f 转债量化手册_因子投资实践_v2.md -b 华泰证券
+仓库自带两个带人工标注答案的基准,同样不依赖 LLM:
 
-# 生产模式（需 LLM）
-cp .env.example .env   # 填入 LLM_API_KEY
-APP_ENV=prod DATA_SOURCE=tushare uv run reproagent reproduce report.pdf
+    DATA_SOURCE=local LOCAL_DATA_PATH=tests/fixtures/test_data \
+      uv run reproagent benchmark --run minimal
+    DATA_SOURCE=local LOCAL_DATA_PATH=tests/fixtures/test_data \
+      uv run reproagent benchmark --run cb-factor-investing
 
-# 浏览因子库 / TUI / MCP
-uv run reproagent library --html
-uv run reproagent tui
-uv run reproagent mcp
+手里已经是 Markdown 版研报的话,跳过 PDF 解析直接来:
 
-# 浏览器工作台（因子库 / 人工复核 / 研报复现）
-uv run reproagent serve --port 8765
-# 打开 http://127.0.0.1:8765/
-```
+    uv run reproagent text -f report.md -b 华泰证券
 
-## 系统架构
+生产环境:`cp .env.example .env` 填好 `LLM_API_KEY`,然后
 
-```
-                    ┌─────────────┐
-   PDF / Markdown ─→│  Ingestion  │ 上传 / 校验 / 复核队列
-                    └──────┬──────┘
-                           ↓
-                    ┌─────────────┐
-                    │   Parser    │ finreportparser 布局
-                    │             │ 分块 LLM 提取 + 置信度门控
-                    └──────┬──────┘
-                           ↓
-                    ┌─────────────┐
-                    │ Reproducer  │ Polars 55+ 算子 + 守卫
-                    │             │ 分组回测 + 反过拟合
-                    └──────┬──────┘
-                           ↓
-                    ┌─────────────┐
-                    │  Deviation  │ 偏差 / 根因 / ≤3 次自愈
-                    └──────┬──────┘
-                           ↓
-                    ┌─────────────┐
-                    │   Library   │ 入库 / wiki / 经验记忆
-                    └─────────────┘
-```
+    APP_ENV=prod DATA_SOURCE=tushare uv run reproagent reproduce report.pdf
 
-## 核心特性
+prod 模式禁掉 mock 提取和公式回退,没有 key 会直接拒绝运行,不会悄悄降级。
 
-- **多后端 PDF 解析** — finreportparser：布局、表格修复、图表识别
-- **长文分块 LLM 提取** — 按页/长度切分，合并去重
-- **置信度门控** — 低置信 / WARN 映射默认进人工复核
-- **55+ 因子算子** — Rank, CSZScore, Ref, Mean, Std, EMA, Corr 等
-- **转债字段** — ytm / premium_rate / bond_value / implied_vol / option_value …
-- **反过拟合** — DSR, PBO, MinBTL, Bootstrap CI, Walk-Forward, Placebo
-- **数据守卫** — ST/停牌/新股/涨跌停；未来函数 AST 检测
-- **反思自愈** — N≤3 + 按根因修订 + ExperienceMemory
-- **Benchmark** — ground_truth 驱动全链路比对（`minimal` / `cb-factor-investing`）
-- **CLI + TUI + MCP** — Typer / Textual / FastMCP 8 工具
-- **全离线可跑** — mock LLM + local parquet
+## 能做什么,不能做什么
 
-## CLI
+能做的部分:
 
-```bash
-reproagent ingest report.pdf
-reproagent reproduce report.pdf
-reproagent text -f report.md [-t title] [-b broker]
-reproagent library [--html] [-s style]
-reproagent review --list | --approve ID | --reject ID
-reproagent serve [--host 127.0.0.1] [--port 8765]
-reproagent benchmark --list | --run ID | --run-all | --report
-reproagent mcp
-reproagent tui
-reproagent --version
-```
+- PDF/Markdown 到结构化因子定义,LLM 结构化提取,长文自动分块合并
+- Polars 表达式引擎,55+ 算子,分组回测给出 IC/ICIR/夏普/最大回撤/换手
+- 复现指标与研报声称值做偏差分析,按根因分类定向修订,重试不超过三次
+- 反过拟合体检:DSR/PBO/MinBTL/bootstrap CI/walk-forward/placebo 一整套
+- 数据守卫:ST、停牌、新股、涨跌停处理;未来函数 AST 检测
+- 通过门控的进因子库(附 wiki 页面),拿不准的进人工复核队列
 
-### 统一输出 schema（reproduce / text）
+不要指望它做的事:
 
-```json
-{
-  "status": "passed|partial|review_enqueued|...",
-  "source": "pdf|text",
-  "report_id": "...",
-  "factor_count": 1,
-  "summary": {"total": 1, "passed": 1, "converged": 0, "review_enqueued": 0, "errors": 0},
-  "factors": [{"factor_name": "...", "status": "passed", "metrics": {...}}]
-}
-```
+- 实盘交易
+- 组合优化和风险模型——它只管单因子复现这一段
+- 编造研报里没写的细节,提取不到的东西会走复核流程
+
+## 接口
+
+以 CLI 为主:
+
+    reproagent ingest report.pdf      # 校验并入库
+    reproagent reproduce report.pdf   # 端到端复现
+    reproagent text -f report.md      # Markdown 直接进
+    reproagent library [--html]       # 浏览因子库
+    reproagent review --list | --approve ID | --reject ID
+    reproagent benchmark --list | --run ID | --run-all | --report
+    reproagent serve                  # 浏览器工作台,默认 http://127.0.0.1:8765
+    reproagent tui                    # 终端界面
+    reproagent mcp                    # MCP 服务,给支持 MCP 的客户端调用
+
+`reproduce` 和 `text` 输出统一结构的 JSON(`status/source/summary/factors/data_context`),
+方便脚本消费。注意 `soft_passed` 这个状态:指标没完全对上、但复现结果健康,因子已经入库,
+和干净的 `passed` 是两回事,批处理时建议分开统计。
 
 ## 配置
 
-| 环境变量 | 说明 | 默认 |
-|----------|------|------|
-| `APP_ENV` | `dev` 允许 mock / `prod` 禁止 | `dev` |
-| `LLM_API_KEY` | LLM Key（prod 必须） | — |
-| `LLM_PROVIDER` | `openai` / `anthropic` | `anthropic` |
-| `LLM_MODEL` | 模型名 | `claude-sonnet-4-5` |
-| `PARSER_BACKEND` | PDF 后端 | `finpdfpro` |
-| `DATA_SOURCE` | `local` / `ricequant` / `tushare` / `qlib` | `local` |
-| `LOCAL_DATA_PATH` | 本地 panel 目录 | `tests/fixtures/test_data` |
+配置全走环境变量,`.env` 也认。常用的几个:
 
-详见 `.env.example` 与 `src/reproagent/settings.py`。
+| 变量 | 说明 | 默认 |
+|------|------|------|
+| `APP_ENV` | dev 允许 mock 和回退;prod 全部严格阻断 | `dev` |
+| `LLM_API_KEY` | 提取用的 LLM key | 空 |
+| `LLM_PROVIDER` / `LLM_MODEL` | `openai` 或 `anthropic` | `anthropic` / `claude-sonnet-4-5` |
+| `PARSER_BACKEND` | PDF 解析后端 | `finpdfpro` |
+| `DATA_SOURCE` | `local` / `ricequant` / `qlib` / `tushare` | `local` |
+| `LOCAL_DATA_PATH` | local 模式的 parquet 目录 | `tests/fixtures/test_data` |
 
-### 数据源运行手册
+各数据源要准备什么:
 
-| 源 | 准备 | 用途 |
-|----|------|------|
-| **local** | `prices.parquet` + 可选 `fundamentals.parquet` / `cb_prices.parquet` | CI / 离线 / 转债 fixture |
-| **tushare** | `TUSHARE_TOKEN` + `uv sync --extra tushare` | 日常股票/基本面 |
-| **ricequant** | `RICEQUANT_TOKEN` 或 `RQ_USER`/`RQ_PASS` + extra | 机构级量价 |
-| **qlib** | `QLIB_DATA_PATH` | 研究用本地 qlib 库 |
+- **local**:一个 `prices.parquet`(可选加 `fundamentals.parquet`、`cb_prices.parquet`),CI 和离线开发够用
+- **tushare / ricequant**:各自的 token,加上对应 extra
+- **qlib**:本地 qlib 数据目录
 
-转债 universe 别名：`全转债` / `cb` / `convertible` → 优先读 `cb_prices.parquet`。
+转债 universe 写 `全转债`、`cb` 或 `convertible` 时会优先读 `cb_prices.parquet`。
 
-### 生产检查清单
-
-1. `APP_ENV=prod` + 有效 `LLM_API_KEY`
-2. `DATA_SOURCE` 非 local 时凭证齐全
-3. 关闭 mock：不要设 `ALLOW_MOCK_LLM=true`
-4. 跑 `benchmark --run minimal` 冒烟
-5. 长研报建议 `FINPDFPRO_MODE=balanced` 或 `max-quality`
-
-## 安装选项
-
-```bash
-uv sync --extra dev          # 开发
-uv sync --extra instructor   # LLM 结构化提取
-uv sync --extra ricequant    # 米筐
-uv sync --extra tushare      # Tushare
-uv sync --extra paddle       # PaddleOCR
-uv sync --extra vlm          # 本地 VLM
-```
+可选 extra:`instructor`(结构化提取)、`ricequant`、`tushare`、`paddle`(OCR)、`vlm`(本地视觉模型)、`formula`(公式识别)、`mcp`。
 
 ## 测试
 
-```bash
-make test
-make lint
-OPENAI_API_KEY= ANTHROPIC_API_KEY= uv run pytest -q
-```
+    make test    # 或者 OPENAI_API_KEY= ANTHROPIC_API_KEY= uv run pytest -q
+    make lint
 
-## 项目结构
+改了引擎和管线相关的代码,建议顺手跑一遍 `benchmark --run-all`,
+ground truth 会拦住大部分行为回归。
 
-```
-src/
-  reproagent/
-    models/ parser/ reproducer/ deviation/ library/
-    benchmark/       # ground_truth 全链路 runner
-    pipeline.py      # 端到端编排
-    cli.py mcp_server.py tui/
-  finreportparser/   # Vendored PDF 后端
-tests/
-  conformance/ unit/ integration/ fixtures/
-```
+## 代码结构
 
-## 技术栈
-
-| 层 | 选型 |
-|---|------|
-| 语言 | Python 3.12+ |
-| 包管理 | uv + pyproject.toml |
-| 因子计算 | Polars |
-| 持久化 | SQLite (SQLModel) + Parquet |
-| LLM | OpenAI / Anthropic + instructor |
-| CLI / TUI / MCP | Typer · Textual · FastMCP |
+`src/reproagent/` 按流水线五段分包:models、parser、reproducer、deviation、library,
+外围是 ingestion、benchmark、web、tui、persistence、cache、memory、agents;
+PDF 解析后端 vendor 在 `src/finreportparser/`。
+想读懂内部逻辑,从 `pipeline.py` 的 `reproduce_report` / `reproduce_text` 顺着往下看最顺。
 
 ## License
 
