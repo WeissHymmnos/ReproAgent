@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import event
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import SQLModel, create_engine
 
 _INIT_LOCK = threading.Lock()
 
@@ -81,8 +79,3 @@ def _migrate_library_metrics(engine: Any) -> None:
             )
 
 
-@contextmanager
-def get_session(engine: Any) -> Iterator[Session]:
-    """会话上下文管理器。"""
-    with Session(engine) as session:
-        yield session

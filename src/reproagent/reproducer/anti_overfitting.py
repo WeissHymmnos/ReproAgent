@@ -346,17 +346,6 @@ def min_backtest_length(
     return MinBTLResult(min_obs=min_obs, actual_obs=0, sufficient=False)
 
 
-def min_backtest_length_check(
-    sharpe: float,
-    actual_obs: int,
-    variance: float = 0.04,
-    alpha: float = 0.05,
-) -> MinBTLResult:
-    """带实际观测数的 MinBTL 检查。"""
-    result = min_backtest_length(sharpe, variance, alpha)
-    result.actual_obs = actual_obs
-    result.sufficient = actual_obs >= result.min_obs
-    return result
 
 
 def bootstrap_sharpe_ci(

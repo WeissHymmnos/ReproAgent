@@ -467,33 +467,5 @@ class StrategyBacktester:
         )
 
 
-def neutralize_industry(
-    factor: pl.Series,
-    industry: pl.Series,
-) -> pl.Series:
-    """截面回归残差法：factor ~ industry_dummies → residuals。"""
-    df = pl.DataFrame({"factor": factor, "industry": industry}).drop_nulls()
-    if df.is_empty():
-        return factor
-    industry_means = df.group_by("industry").agg(pl.col("factor").mean().alias("ind_mean"))
-    df = df.join(industry_means, on="industry", how="left")
-    return df["factor"] - df["ind_mean"]
 
 
-def neutralize_market_cap(
-    factor: pl.Series,
-    log_mcap: pl.Series,
-) -> pl.Series:
-    """截面回归残差法：factor ~ log_mcap → residuals。"""
-    df = pl.DataFrame({"factor": factor, "log_mcap": log_mcap}).drop_nulls()
-    if df.is_empty() or df["log_mcap"].std() == 0:
-        return factor
-    # OLS: factor = α + β * log_mcap + ε
-    x = df["log_mcap"].to_numpy()
-    y = df["factor"].to_numpy()
-    import numpy as np
-
-    x_with_intercept = np.column_stack([np.ones(len(x)), x])
-    beta = np.linalg.lstsq(x_with_intercept, y, rcond=None)[0]
-    residuals = y - x_with_intercept @ beta
-    return pl.Series("neutral_factor", residuals)

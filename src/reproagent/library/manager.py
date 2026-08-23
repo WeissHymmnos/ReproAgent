@@ -87,8 +87,13 @@ class FactorLibraryManager:
         most_similar = None
         corr_details: dict[str, float] = {}
 
+        from reproagent.reproducer.metrics import find_backtest_artifact_dir
+
         for entry in entries:
-            fv_path = self.paths.data_dir / "backtest" / entry.id / "factor_values.parquet"
+            folder = find_backtest_artifact_dir(self.paths.data_dir, entry)
+            if folder is None:
+                continue
+            fv_path = folder / "factor_values.parquet"
             if not fv_path.exists():
                 continue
             try:

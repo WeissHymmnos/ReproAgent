@@ -101,6 +101,8 @@ def _forward_returns_for_factor_panel(factor_values: Any) -> Any | None:
 
 def run_anti_overfitting_from_equity(equity_path: str | None) -> dict:
     """Read an equity-curve parquet and run the anti-overfitting suite."""
+    from dataclasses import asdict
+
     import numpy as np
     import polars as pl
 
@@ -110,6 +112,8 @@ def run_anti_overfitting_from_equity(equity_path: str | None) -> dict:
         min_backtest_length,
         placebo_test,
         prob_backtest_overfitting,
+        subsample_stress_test,
+        walk_forward_validation,
     )
 
     empty = {
@@ -119,6 +123,8 @@ def run_anti_overfitting_from_equity(equity_path: str | None) -> dict:
         "min_btl": None,
         "sharpe_ci": None,
         "placebo_pvalue": None,
+        "walk_forward": None,
+        "stress_test": None,
     }
     if not equity_path:
         return {**empty, "note": "No equity curve path"}
@@ -177,7 +183,7 @@ def run_anti_overfitting_from_equity(equity_path: str | None) -> dict:
     except Exception:  # noqa: BLE001
         placebo_p = None
 
-    return {
+    out = {
         "dsr": float(dsr.dsr),
         "dsr_pvalue": float(dsr.p_value),
         "pbo": float(pbo.pbo),
@@ -187,9 +193,28 @@ def run_anti_overfitting_from_equity(equity_path: str | None) -> dict:
             "upper": float(boot.sharpe_ci_upper),
         },
         "placebo_pvalue": float(placebo_p) if placebo_p is not None else None,
+        "walk_forward": None,
+        "stress_test": None,
         "n_obs": len(rets),
         "sharpe": sharpe,
     }
+    try:
+        fv_path = path.parent / "factor_values.parquet"
+        if fv_path.exists():
+            fv = pl.read_parquet(fv_path)
+            fwd = _forward_returns_for_factor_panel(fv)
+            if fwd is not None:
+                wf = walk_forward_validation(fv, fwd, n_splits=5)
+                out["walk_forward"] = asdict(wf)
+                merged = fv.join(fwd, on=["date", "asset"], how="inner").drop_nulls()
+                if len(merged) >= 30:
+                    st = subsample_stress_test(merged)
+                    out["stress_test"] = asdict(st)
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "walk-forward/stress extension skipped: %s", exc
+        )
+    return out
 
 
 def _library_entry_for_grade(backtest_id: str) -> Any:

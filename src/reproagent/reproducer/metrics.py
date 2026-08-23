@@ -8,8 +8,6 @@ from typing import Any
 
 import polars as pl
 
-from reproagent.models.backtest import BacktestResult
-
 
 def kendall_tau_pairs(x: Any, y: Any) -> float:
     """Kendall tau; scipy if present, otherwise a pairwise numpy-free fallback."""
@@ -119,44 +117,6 @@ def compute_max_drawdown(equity_curve: pl.Series) -> float:
     return abs(_as_float(drawdown.min()))
 
 
-def generate_charts(
-    backtest_result: BacktestResult,
-    output_dir: Path,
-) -> list[Path]:
-    """生成净值曲线、分组收益、IC 时序图，返回图片路径。"""
-    from reproagent.utils.plotting import (
-        save_equity_curve_chart,
-        save_group_returns_chart,
-        save_ic_timeseries_chart,
-    )
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    paths = []
-
-    if backtest_result.group_annualized_returns:
-        p = save_group_returns_chart(
-            backtest_result.group_annualized_returns, output_dir / "group_returns.png"
-        )
-        paths.append(p)
-
-    if backtest_result.equity_curve_path.exists():
-        df = pl.read_parquet(backtest_result.equity_curve_path)
-        if "date" in df.columns and "ls_return" in df.columns:
-            equity = (1 + df["ls_return"]).cum_prod()
-            equity_dict = dict(zip(df["date"].to_list(), equity.to_list()))
-            p = save_equity_curve_chart(equity_dict, output_dir / "equity_curve.png")
-            paths.append(p)
-
-    factor_values_dir = backtest_result.factor_values_path.parent
-    ic_path = factor_values_dir / "ic.parquet"
-    if ic_path.exists():
-        df = pl.read_parquet(ic_path)
-        if "date" in df.columns and "ic" in df.columns:
-            ic_dict = dict(zip(df["date"].to_list(), df["ic"].to_list()))
-            p = save_ic_timeseries_chart(ic_dict, output_dir / "ic_timeseries.png")
-            paths.append(p)
-
-    return paths
 
 
 def metrics_from_backtest(result: Any) -> dict[str, Any]:
@@ -336,103 +296,7 @@ def serialize_equity_returns(path: Path | None) -> dict[str, float]:
     return out
 
 
-def compute_alpha_decay(
-    factor_values: pl.DataFrame,
-    forward_returns: pl.DataFrame,
-    lags: list[int] | None = None,
-) -> dict[int, float]:
-    """前向多滞后期 Rank IC 衰减曲线。
-
-    对每个 lag，用 factor_value(t) 预测 forward_return(t+lag)，
-    计算截面的平均 Rank IC。
-
-    Returns
-    -------
-    dict[int, float]: {lag_days: mean_rank_ic}
-    """
-    if lags is None:
-        lags = [1, 2, 3, 5, 10, 20]
-
-    df = factor_values.join(forward_returns, on=["date", "asset"], how="inner").drop_nulls()
-    df = df.sort(["asset", "date"])
-
-    result: dict[int, float] = {}
-    for lag in lags:
-        lagged = df.with_columns(
-            pl.col("forward_return").shift(-lag).over("asset").alias(f"fwd_lag{lag}")
-        ).drop_nulls(f"fwd_lag{lag}")
-
-        if lagged.is_empty():
-            result[lag] = 0.0
-            continue
-
-        ic_df = (
-            lagged.group_by("date")
-            .agg(pl.corr("factor_value", f"fwd_lag{lag}", method="spearman").alias("ic"))
-            .drop_nulls("ic")
-        )
-        result[lag] = _as_float(ic_df["ic"].mean()) if len(ic_df) > 0 else 0.0
-
-    return result
 
 
-def compute_monotonicity(
-    grouped_returns: pl.DataFrame,
-) -> float:
-    """分组收益单调性：Kendall tau between (group_rank, group_mean_return) per date。
-
-    Parameters
-    ----------
-    grouped_returns: 含 date, group (int), daily_return 列
-
-    Returns
-    -------
-    float: 逐日 Kendall tau 的截面均值（无偏见 0）
-    """
-    if grouped_returns.is_empty():
-        return 0.0
-
-    if "group" not in grouped_returns.columns or "daily_return" not in grouped_returns.columns:
-        return 0.0
-
-    dates = grouped_returns["date"].unique().to_list()
-    taus: list[float] = []
-    for d in dates:
-        ddf = grouped_returns.filter(pl.col("date") == d)
-        if len(ddf) < 2:
-            continue
-        tau = kendall_tau_pairs(ddf["group"].to_list(), ddf["daily_return"].to_list())
-        taus.append(tau)
-
-    return float(sum(taus) / len(taus)) if taus else 0.0
 
 
-def compute_half_life(ic_series: dict[int, float]) -> float:
-    """从 alpha decay 曲线估算因子半衰期（Rank IC 衰减到初始值一半的天数）。
-
-    使用指数衰减拟合：IC(lag) ≈ IC₀ * exp(-lag / τ)
-    """
-    if not ic_series:
-        return 0.0
-
-    import numpy as np
-
-    lags = sorted(ic_series.keys())
-    ic_values = [ic_series[lag] for lag in lags]
-    ic0 = abs(ic_values[0]) if ic_values[0] != 0 else 1.0
-
-    # 找第一个 |IC| < |IC₀|/2 的 lag
-    half_threshold = ic0 / 2.0
-    for lag, ic in zip(lags, ic_values):
-        if abs(ic) < half_threshold:
-            return float(lag)
-
-    # 如果未衰减到一半，做指数拟合估算
-    if len(lags) >= 2:
-        log_values = [np.log(max(abs(v), 1e-10)) for v in ic_values]
-        if len(set(lags)) >= 2:
-            slope, _ = np.polyfit(lags, log_values, 1)
-            if abs(slope) > 1e-10:
-                return float(-np.log(2) / slope)
-
-    return float(len(lags))
