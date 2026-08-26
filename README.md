@@ -49,6 +49,7 @@ prod 模式禁掉 mock 提取和公式回退,没有 key 会直接拒绝运行,�
 - 反过拟合体检:DSR/PBO/MinBTL/bootstrap CI/walk-forward/placebo 一整套
 - 数据守卫:ST、停牌、新股、涨跌停处理;未来函数 AST 检测
 - 通过门控的进因子库(附 wiki 页面),拿不准的进人工复核队列
+- 工作台行情带和数据源健康检查
 
 不要指望它做的事:
 
@@ -69,6 +70,9 @@ prod 模式禁掉 mock 提取和公式回退,没有 key 会直接拒绝运行,�
     reproagent serve                  # 浏览器工作台,默认 http://127.0.0.1:8765
     reproagent tui                    # 终端界面
     reproagent mcp                    # MCP 服务,给支持 MCP 的客户端调用
+    reproagent decay                  # 因子库 IC 衰减复查
+    reproagent runs --list            # 列出 reproduce/reflection 运行记录
+    reproagent market                 # 数据源健康 + 最近交易日行情带
 
 `reproduce` 和 `text` 输出统一结构的 JSON(`status/source/summary/factors/data_context`),
 方便脚本消费。注意 `soft_passed` 这个状态:指标没完全对上、但复现结果健康,因子已经入库,
@@ -83,7 +87,7 @@ prod 模式禁掉 mock 提取和公式回退,没有 key 会直接拒绝运行,�
 | `APP_ENV` | dev 允许 mock 和回退;prod 全部严格阻断 | `dev` |
 | `LLM_API_KEY` | 提取用的 LLM key | 空 |
 | `LLM_PROVIDER` / `LLM_MODEL` | `openai` 或 `anthropic` | `anthropic` / `claude-sonnet-4-5` |
-| `PARSER_BACKEND` | PDF 解析后端 | `finpdfpro` |
+| `PARSER_BACKEND` | PDF 解析后端，仅 `finpdfpro` | `finpdfpro` |
 | `DATA_SOURCE` | `local` / `ricequant` / `qlib` / `tushare` | `local` |
 | `LOCAL_DATA_PATH` | local 模式的 parquet 目录 | `tests/fixtures/test_data` |
 
@@ -91,11 +95,11 @@ prod 模式禁掉 mock 提取和公式回退,没有 key 会直接拒绝运行,�
 
 - **local**:一个 `prices.parquet`(可选加 `fundamentals.parquet`、`cb_prices.parquet`),CI 和离线开发够用
 - **tushare / ricequant**:各自的 token,加上对应 extra
-- **qlib**:本地 qlib 数据目录
+- **qlib**:本地 qlib 数据目录（`uv sync --extra qlib` 安装 `pyqlib`）
 
 转债 universe 写 `全转债`、`cb` 或 `convertible` 时会优先读 `cb_prices.parquet`。
 
-可选 extra:`instructor`(结构化提取)、`ricequant`、`tushare`、`paddle`(OCR)、`vlm`(本地视觉模型)、`formula`(公式识别)、`mcp`。
+可选 extra:`instructor`(结构化提取)、`ricequant`、`tushare`、`qlib`、`paddle`(OCR)、`vlm`(本地视觉模型)、`formula`(公式识别)、`mcp`。
 
 ## 测试
 

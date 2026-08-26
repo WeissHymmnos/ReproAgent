@@ -1,4 +1,4 @@
-"""Typer CLI：ingest / reproduce / library / review / tui。"""
+"""研报因子复现 CLI。"""
 
 from __future__ import annotations
 
@@ -9,13 +9,26 @@ from typing import Any
 import typer
 
 from reproagent import __version__
-from reproagent.settings import get_settings
+from reproagent.settings import Settings, get_settings
 
 app = typer.Typer(
     name="reproagent",
     help="研报因子复现系统",
     no_args_is_help=True,
 )
+
+
+def _settings() -> Settings:
+    """Load Settings or exit 1 with a configuration error (no traceback dump)."""
+    try:
+        return get_settings()
+    except Exception as exc:
+        from pydantic import ValidationError
+
+        if isinstance(exc, ValidationError):
+            typer.echo(f"configuration error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        raise
 
 
 def _version_callback(value: bool) -> None:
@@ -111,7 +124,7 @@ def _build_repository() -> Any:
     from reproagent.persistence.db import get_engine, init_db
     from reproagent.persistence.repository import Repository
 
-    settings = get_settings()
+    settings = _settings()
     try:
         settings.data_dir.mkdir(parents=True, exist_ok=True)
     except PermissionError as exc:
@@ -131,7 +144,7 @@ def _build_library_manager() -> Any:
     from reproagent.library.manager import FactorLibraryManager
     from reproagent.persistence.paths import AppPaths
 
-    settings = get_settings()
+    settings = _settings()
     repo = _build_repository()
     paths = AppPaths.from_settings(settings)
     paths.ensure_layout()
@@ -207,7 +220,7 @@ def reproduce(
         typer.echo(f"reproduce unavailable: pipeline import failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
-    settings = get_settings()
+    settings = _settings()
     if settings.is_prod and not settings.mock_llm_allowed:
         key = settings.llm_api_key.get_secret_value().strip()
         if not key:
@@ -278,7 +291,7 @@ def text(
         typer.echo("text: 输入为空。", err=True)
         raise typer.Exit(code=1)
 
-    settings = get_settings()
+    settings = _settings()
     if settings.is_prod and not settings.mock_llm_allowed:
         key = settings.llm_api_key.get_secret_value().strip()
         if not key:
@@ -309,13 +322,26 @@ def library(
     refresh_metrics: bool = typer.Option(
         False, "--refresh-metrics", help="从 backtest/ 产物回填空 metrics"
     ),
+    check_decay: bool = typer.Option(
+        False, "--check-decay", help="按入库 IC vs 近期 IC 评估衰减"
+    ),
 ) -> None:
     """浏览因子库。"""
     from reproagent.models.library import LibraryFilter
 
     manager = _build_library_manager()
+    if check_decay:
+        from reproagent.library.decay_monitor import (
+            pairs_from_library_entries,
+            run_library_decay_check,
+        )
+
+        settings = _settings()
+        pairs = pairs_from_library_entries(manager.list(), data_dir=settings.data_dir)
+        _print_decay_report(run_library_decay_check(pairs))
+        return
     if refresh_metrics:
-        settings = get_settings()
+        settings = _settings()
         n = manager.backfill_metrics(settings.data_dir)
         typer.echo(f"library: refreshed metrics for {n} factor(s)")
         # Wiki dashboard is a static file; backfill must rewrite it or IC stays 0.
@@ -352,7 +378,7 @@ def library(
     if html:
         from reproagent.library.dashboard import write_library_dashboard
 
-        settings = get_settings()
+        settings = _settings()
         out = settings.wiki_dir / "dashboard.html"
         write_library_dashboard(all_entries, out)
         if cap is not None and len(all_entries) > len(entries):
@@ -361,6 +387,96 @@ def library(
                 f"(print cap is {cap})"
             )
         typer.echo(f"html dashboard -> {out}")
+
+
+def _print_decay_report(report: Any) -> None:
+    typer.echo(
+        "decay: "
+        f"checked={report.total_checked} stable={report.stable} "
+        f"decaying={report.decaying} deprecated={report.deprecated}"
+    )
+    for st in report.factors:
+        typer.echo(
+            f"  {st.factor_id} {st.status} "
+            f"orig={st.original_ic:.4f} curr={st.current_ic:.4f} "
+            f"drop={st.ic_drop_ratio:.2f}"
+        )
+
+
+@app.command()
+def decay() -> None:
+    """按入库 IC 与近期 IC 检查因子库衰减。"""
+    from reproagent.library.decay_monitor import (
+        pairs_from_library_entries,
+        run_library_decay_check,
+    )
+
+    manager = _build_library_manager()
+    settings = _settings()
+    pairs = pairs_from_library_entries(manager.list(), data_dir=settings.data_dir)
+    _print_decay_report(run_library_decay_check(pairs))
+
+
+@app.command()
+def market(
+    catalog: bool = typer.Option(False, "--catalog", help="只打印数据源健康目录"),
+    universe: str = typer.Option("all", "--universe", "-u", help="股票池"),
+    limit: int = typer.Option(20, "--limit", help="行情条数"),
+) -> None:
+    """数据源健康与最近交易日行情。"""
+    from reproagent.market.catalog import probe_feeds
+    from reproagent.market.tape import build_market_snapshot
+
+    settings = _settings()
+    feeds = probe_feeds(settings)
+    typer.echo(
+        f"feeds: active={feeds['active']} ready={feeds['ready']}/{feeds['count']}"
+    )
+    for item in feeds["items"]:
+        mark = "*" if item["active"] else " "
+        typer.echo(
+            f"  [{mark}] {item['id']:<10} {item['status']:<16} {item['detail']}"
+        )
+    if catalog:
+        return
+    snap = build_market_snapshot(settings, universe=universe, limit=limit)
+    pulse = snap["pulse"]
+    typer.echo(
+        f"tape: source={snap['data_source']} universe={universe} "
+        f"session={pulse.get('session')} assets={pulse.get('n_assets')} "
+        f"up={pulse.get('n_up')} down={pulse.get('n_down')}"
+    )
+    typer.echo(f"{'asset':<14} {'close':>10} {'chg%':>10} {'volume':>12}")
+    for q in snap["quotes"]:
+        pct = q.get("chg_pct")
+        pct_s = f"{pct * 100:.2f}" if pct is not None else "—"
+        close = q.get("close")
+        close_s = f"{close:.4f}" if close is not None else "—"
+        vol = q.get("volume")
+        vol_s = f"{vol:.0f}" if vol is not None else "—"
+        typer.echo(f"{q['asset']:<14} {close_s:>10} {pct_s:>10} {vol_s:>12}")
+
+
+@app.command()
+def runs(
+    _list_runs: bool = typer.Option(
+        False, "--list", "-l", help="列出 reproduce/reflection 运行记录"
+    ),
+) -> None:
+    """列出 reproduce/reflection 运行记录。"""
+    from reproagent.persistence.run_log import list_run_records
+
+    settings = _settings()
+    records = list_run_records(settings.data_dir)
+    if not records:
+        typer.echo("runs: empty")
+        return
+    typer.echo(f"runs: {len(records)}")
+    for rec in records:
+        typer.echo(
+            f"  id={rec.get('id')} kind={rec.get('kind')} "
+            f"formula={rec.get('formula')} window={rec.get('window')}"
+        )
 
 
 @app.command()
@@ -521,10 +637,10 @@ def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="绑定地址"),
     port: int = typer.Option(8765, "--port", "-p", help="端口"),
 ) -> None:
-    """启动浏览器工作台（因子库 / 人工复核 / 研报复现）。"""
+    """启动浏览器工作台。"""
     from reproagent.web.app import serve as serve_web
 
-    typer.echo(f"Starting ReproAgent workstation on http://{host}:{port}/")
+    typer.echo(f"ReproAgent 工作台 http://{host}:{port}/")
     serve_web(host=host, port=port)
 
 
@@ -585,7 +701,7 @@ def benchmark(
             for r in reports:
                 if r.get("status") == "validated":
                     typer.echo(f"- **{r['report_id']}**: {r.get('report_title', '')}")
-        settings = get_settings()
+        settings = _settings()
         results_root = settings.data_dir / "benchmark"
         typer.echo()
         typer.echo("## Last run results")
@@ -628,7 +744,7 @@ def benchmark(
             typer.echo(f"benchmark unavailable: {exc}", err=True)
             raise typer.Exit(code=1) from exc
 
-        settings = get_settings()
+        settings = _settings()
         # 默认指向 fixtures 测试数据，便于离线跑通
         if settings.local_data_path is None:
             local = Path("tests/fixtures/test_data")
@@ -657,7 +773,7 @@ def benchmark(
             typer.echo(f"benchmark unavailable: {exc}", err=True)
             raise typer.Exit(code=1) from exc
 
-        settings = get_settings()
+        settings = _settings()
         if settings.local_data_path is None:
             local = Path("tests/fixtures/test_data")
             if local.exists():
@@ -683,7 +799,7 @@ def benchmark(
 
 @app.command()
 def mcp() -> None:
-    """启动 MCP 服务器，供支持 MCP 协议的客户端调用。"""
+    """启动 MCP 服务。"""
     try:
         from reproagent.mcp_server import build_mcp_server
 

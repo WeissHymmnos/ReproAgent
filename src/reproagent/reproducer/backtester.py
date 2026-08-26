@@ -128,11 +128,25 @@ class StrategyBacktester:
                 data.height - _deduped.height,
             )
             data = _deduped
-        data = data.with_columns(
-            pl.when(pl.col("close").abs() > 1e-12)
-            .then(pl.col("close").shift(-1).over("ts_code") / pl.col("close") - 1)
-            .otherwise(None)
-            .alias("forward_return")
+        from reproagent.reproducer.pit import apply_point_in_time
+        from reproagent.reproducer.sim_transforms import (
+            apply_decay,
+            apply_delay_forward_returns,
+            apply_limit_no_fill,
+            apply_truncation,
+            cost_rate_bps,
+            neutralize_factor_values,
+        )
+
+        data = apply_point_in_time(data)
+        delay = int(getattr(params, "delay", 1) or 1)
+        data = apply_delay_forward_returns(data, delay)
+        if bool(getattr(params, "limit_no_fill", True)):
+            data = apply_limit_no_fill(data, delay)
+        decay = int(getattr(params, "decay", 0) or 0)
+        factor_values = apply_decay(factor_values, decay)
+        factor_values = neutralize_factor_values(
+            factor_values, data, getattr(params, "neutralization", "none")
         )
 
         forward_returns = data.select(
@@ -222,6 +236,7 @@ class StrategyBacktester:
                     short_weights.select(["date", "asset", "weight"]),
                 ]
             )
+            weights = apply_truncation(weights, getattr(params, "truncation", None))
         else:
             df_weights = factor_values.drop_nulls("factor_value")
             df_weights = df_weights.with_columns(
@@ -321,6 +336,7 @@ class StrategyBacktester:
                 weights = weights.with_columns(
                     pl.col("weight").clip(-float(cap), float(cap)).alias("weight")
                 )
+            weights = apply_truncation(weights, getattr(params, "truncation", None))
             npos = params.max_positions
             if npos is not None and int(npos) > 0 and not weights.is_empty():
                 weights = (
@@ -418,8 +434,11 @@ class StrategyBacktester:
 
         avg_turnover = _as_float(daily_turnover["turnover"].mean())
 
-        # 3. 扣减交易成本
-        cost_rate = params.transaction_cost_bps / 10000.0
+        # 3. 扣减交易成本 + 滑点
+        cost_rate = cost_rate_bps(
+            float(params.transaction_cost_bps),
+            float(getattr(params, "slippage_bps", 0.0) or 0.0),
+        )
         ls_ret = (
             ls_ret.join(daily_turnover, on="date", how="left")
             .fill_null(0.0)

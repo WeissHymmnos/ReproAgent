@@ -78,7 +78,7 @@ class LayoutExtractor:
 
     def __init__(
         self,
-        backend: Literal["finpdfpro", "marker", "llamaparse", "mineru"] = "finpdfpro",
+        backend: Literal["finpdfpro"] = "finpdfpro",
         settings: Settings | None = None,
     ) -> None:
         self.backend = backend

@@ -1,4 +1,4 @@
-"""Browser workstation UI + JSON payloads for ReproAgent."""
+"""浏览器工作台。"""
 
 from __future__ import annotations
 

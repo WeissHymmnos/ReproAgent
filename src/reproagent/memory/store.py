@@ -1,7 +1,4 @@
-"""MemoryStore：研究记忆读写门面（Phase 0）。
-
-后续 Phase 会在 pipeline / reflection / review 中调用；当前仅提供 API。
-"""
+"""MemoryStore：记忆表读写。"""
 
 from __future__ import annotations
 

@@ -1,13 +1,4 @@
-"""Multi-Agent 研究流程骨架。
-
-Phase 4.4: Lead/Reviewer/Miner 多角色并行探索设计蓝图。
-当前提供各 Agent 角色定义和接口契约，完整编排实现留作后续迭代。
-
-参考架构:
-- QuantaAlpha-claw: 蜂群式 Lead + Reviewer + Miner 并行探索
-- FactorMiner: Ralph Loop (retrieve-generate-evaluate-distill)
-- QuantGPT: 双模型交叉验证 (fact collection + independent judgment + cross-review)
-"""
+"""未接入管线的多角色占位。"""
 
 from __future__ import annotations
 
@@ -73,7 +64,7 @@ class HypothesisAgent:
 
     @staticmethod
     def generate(report_text: str, n_hypotheses: int = 5) -> list[HypothesisResult]:
-        """（骨架）LLM 驱动：从研报 Markdown 中提取结构化假设。"""
+        """未实现。"""
         return []
 
 
@@ -82,7 +73,7 @@ class FactorAgent:
 
     @staticmethod
     def synthesize(hypothesis: HypothesisResult) -> FactorSynthesisResult:
-        """（骨架）LLM 驱动：生成符合 OPERATOR_WHITELIST 的表达式。"""
+        """未实现。返回一条占位动量式。"""
         return FactorSynthesisResult(
             expression="close / Ref(close, 20) - 1",
             input_fields=["close"],
@@ -97,7 +88,7 @@ class BacktestAgent:
     def evaluate(
         expression: str, start_date: str, end_date: str, universe: str = "csi300"
     ) -> BacktestEvaluation:
-        """（骨架）全流程：计算因子 → 回测 → 反过拟合。"""
+        """未实现。"""
         return BacktestEvaluation(ic_mean=0.0, sharpe=0.0, passed=False)
 
 
@@ -110,7 +101,7 @@ class ReviewAgent:
         synthesis: FactorSynthesisResult,
         evaluation: BacktestEvaluation,
     ) -> ReviewVerdict:
-        """（骨架）第二个 LLM 独立评估推理链。"""
+        """未实现。"""
         return ReviewVerdict(
             verdict="revise",
             reasoning="Dual-model cross-review not yet implemented",
@@ -128,7 +119,7 @@ class CuratorAgent:
         review: ReviewVerdict,
         library_correlations: dict[str, float] | None = None,
     ) -> CuratorDecision:
-        """（骨架）多因素综合入库决策。"""
+        """未实现。按 evaluation.passed 和 review.verdict 走占位分支。"""
         if evaluation.passed and review.verdict == "approve":
             return CuratorDecision(action="accept", reason="All checks passed")
         if review.verdict == "reject":

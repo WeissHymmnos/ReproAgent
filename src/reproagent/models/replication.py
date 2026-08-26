@@ -20,8 +20,13 @@ class BacktestParams(BaseModel):
     rebalance_frequency: Literal["daily", "weekly", "monthly", "quarterly"] = "monthly"
     num_groups: int = 5
     transaction_cost_bps: float = 3.0
+    slippage_bps: float = 0.0
+    delay: int = 1
+    decay: int = 0
+    neutralization: Literal["none", "market", "industry", "subindustry"] = "none"
+    truncation: float | None = None
+    limit_no_fill: bool = True
 
-    # 策略模式新增参数
     mode: Literal["factor", "strategy"] = "factor"
     strategy_mode: Literal["cross_sectional", "time_series"] = "cross_sectional"
     direction: Literal["long_only", "long_short", "long_flat"] = "long_short"

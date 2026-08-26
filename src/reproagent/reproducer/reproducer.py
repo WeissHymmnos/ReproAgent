@@ -37,12 +37,15 @@ class FactorReproducer:
             config.backtest_params.end_date,
         )
 
-        return self.backtester.run(
+        result = self.backtester.run(
             factor_values=factor_values,
             params=config.backtest_params,
             factor_def=factor_def,
             data=prices,
         )
+        from reproagent.reproducer.overfit_eval import attach_anti_overfitting
+
+        return attach_anti_overfitting(result)
 
     def compute_factor(
         self,

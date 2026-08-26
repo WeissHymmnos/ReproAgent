@@ -1,4 +1,4 @@
-"""命令面板定义（占位）。"""
+"""TUI 页签标题。"""
 
 from __future__ import annotations
 

@@ -29,9 +29,8 @@ _CB_UNIVERSE_ALIASES = frozenset(
     }
 )
 
-# 命名股票池 → 米筐指数代码（全 A / all 用沪深 300 成分作可算代理，避免拉全市场）
+# 命名指数 → 米筐代码。全 A / all 不在表内，走全市场成分。
 _NAMED_UNIVERSE_INDEX: dict[str, str] = {
-    "all": "000300.XSHG",
     "csi300": "000300.XSHG",
     "hs300": "000300.XSHG",
     "沪深300": "000300.XSHG",
@@ -40,10 +39,6 @@ _NAMED_UNIVERSE_INDEX: dict[str, str] = {
     "中证500": "000905.XSHG",
     "csi1000": "000852.XSHG",
     "中证1000": "000852.XSHG",
-    "全a股": "000300.XSHG",
-    "全a": "000300.XSHG",
-    "a股": "000300.XSHG",
-    "全市场": "000300.XSHG",
 }
 
 # 进程内缓存：避免同一进程内重复拉同一指数面板
@@ -206,7 +201,23 @@ class DataLoader:
                 ) from exc
             raise ReproductionError(f"Empty convertible instrument list for universe {raw!r}")
 
-        # 命名指数 / 全 A（显式映射表；不是失败后静默代理）
+        # 全市场走 all_instruments；命名指数走成分表
+        from reproagent.reproducer.pit import is_full_market_universe
+
+        if is_full_market_universe(raw) or key in {"all", "全市场"} or "全a" in key:
+            try:
+                inst = rqdatac.all_instruments(type="CS", date=as_of)
+                if inst is not None and len(inst) > 0:
+                    col = "order_book_id" if "order_book_id" in inst.columns else inst.columns[0]
+                    codes = [str(x) for x in inst[col].tolist()]
+                    if codes:
+                        return codes
+            except Exception as exc:  # noqa: BLE001
+                raise ReproductionError(
+                    f"Full-market universe resolve failed for {raw!r} as_of={as_of}: {exc}"
+                ) from exc
+            raise ReproductionError(f"Empty full-market instrument list for universe {raw!r}")
+
         index_id = _NAMED_UNIVERSE_INDEX.get(key)
         if index_id is None:
             if "1000" in key:
@@ -214,8 +225,6 @@ class DataLoader:
             elif "500" in key:
                 index_id = "000905.XSHG"
             elif "300" in key or "沪深300" in raw:
-                index_id = "000300.XSHG"
-            elif key in {"all", "全市场"} or "全a" in key or "a股" in key:
                 index_id = "000300.XSHG"
 
         if index_id is not None:
@@ -438,6 +447,9 @@ class DataLoader:
             )
             df = deduped
 
+        from reproagent.reproducer.pit import apply_point_in_time
+
+        df = apply_point_in_time(df)
         df = df.sort(["ts_code", "trade_date"])
         if df.height == 0:
             raise ReproductionError(
@@ -547,7 +559,7 @@ class DataLoader:
             if "amount" not in pldf.columns:
                 pldf = pldf.with_columns(pl.lit(None).cast(pl.Float64).alias("amount"))
 
-            # 一等公民：拼接市值/估值/ROE 等真实基本面列
+            # 拼接市值 / 估值 / ROE 等基本面列
             pldf = self._join_ricequant_fundamentals(rqdatac, pldf, instruments, start, end)
 
             _RQ_PRICE_CACHE[cache_key] = pldf
@@ -927,10 +939,15 @@ class DataLoader:
             df = df.filter((pl.col("trade_date") >= start) & (pl.col("trade_date") <= end))
 
         # 只取需要的列
+        from reproagent.reproducer.pit import apply_announcement_lag, apply_point_in_time
+
+        df = apply_point_in_time(df)
         available = [c for c in fields if c in df.columns]
-        keep = ["trade_date", "ts_code"] + available
+        extra = [c for c in ("ann_date", "list_date", "delist_date") if c in df.columns]
+        keep = ["trade_date", "ts_code"] + available + extra
         keep = [c for c in keep if c in df.columns]
-        return df.select(keep) if keep else df
+        out = df.select(keep) if keep else df
+        return apply_announcement_lag(out, fund_cols=available)
 
     def _load_ricequant_fundamental(
         self, fields: list[str], start: date, end: date

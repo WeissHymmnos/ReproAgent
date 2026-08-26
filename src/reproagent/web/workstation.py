@@ -1,16 +1,13 @@
-"""Single-page workstation HTML (aiminer-inspired shell; ReproAgent journeys only)."""
+"""浏览器工作台 HTML。"""
 
 from __future__ import annotations
-
-# Language: HTML + CSS + vanilla JS. Dark research-workstation layout
-# patterned after aiminer frontend shell (sidebar nav + main list/detail).
 
 INDEX_HTML = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ReproAgent Workstation</title>
+<title>ReproAgent 工作台</title>
 <style>
 :root {
   color-scheme: dark;
@@ -117,6 +114,17 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .status-line { font-size: 0.85rem; color: var(--ctp-subtext0); }
 .error { color: var(--ctp-red); }
 .ok-text { color: var(--ctp-green); }
+.ticker {
+  display: flex; gap: 18px; overflow-x: auto; padding: 8px 0 4px;
+  font-size: 0.82rem; color: var(--ctp-subtext0); border-bottom: 1px solid var(--ctp-crust);
+}
+.ticker .up { color: var(--ctp-red); }
+.ticker .down { color: var(--ctp-green); }
+.quote-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.quote-table th, .quote-table td { text-align: right; padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,.05); }
+.quote-table th:first-child, .quote-table td:first-child { text-align: left; }
+.feed-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.spark { width: 72px; height: 22px; display: block; }
 </style>
 </head>
 <body>
@@ -124,18 +132,20 @@ button, input, textarea, select { font: inherit; color: inherit; }
   <aside class="sidebar">
     <div>
       <p class="eyebrow">ReproAgent</p>
-      <h1>Web Workstation</h1>
-      <p class="muted">研报因子复现工作台：因子库浏览、人工复核与研报任务提交。</p>
+      <h1>工作台</h1>
+      <p class="muted">因子库、复核、研报复现；行情来自当前数据源。</p>
     </div>
     <div class="badge">本地 · <span id="lib-badge">0</span> 因子</div>
     <nav class="nav">
       <button type="button" class="nav-link active" data-view="library">因子库</button>
+      <button type="button" class="nav-link" data-view="market">行情台</button>
       <button type="button" class="nav-link" data-view="review">人工复核</button>
       <button type="button" class="nav-link" data-view="reproduce">研报复现</button>
     </nav>
-    <p class="muted" style="margin-top:auto">数据来自本机 ReproAgent 库与复核队列。</p>
+    <p class="muted" style="margin-top:auto">行情来自当前 DATA_SOURCE；库与复核来自本机 SQLite。</p>
   </aside>
   <main class="main">
+    <div class="ticker" id="ticker-bar">行情带未加载</div>
     <!-- Library -->
     <section id="view-library" class="view">
       <div class="panel">
@@ -156,6 +166,41 @@ button, input, textarea, select { font: inherit; color: inherit; }
         </div>
         <div class="panel detail" id="lib-detail">
           <div class="empty">← 选择左侧因子查看详情</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Market -->
+    <section id="view-market" class="view hidden">
+      <div class="panel">
+        <h2>行情台</h2>
+        <p class="muted">最近交易日报价，以及当前数据源是否可用。</p>
+        <div class="toolbar">
+          <select id="mkt-universe">
+            <option value="all">全市场 / all</option>
+            <option value="csi300">沪深300</option>
+            <option value="cb">转债</option>
+          </select>
+          <button type="button" class="btn" id="mkt-refresh">刷新</button>
+          <span class="status-line" id="mkt-status"></span>
+        </div>
+        <div class="kpis" id="mkt-kpis"></div>
+      </div>
+      <div class="panel">
+        <h2>数据源</h2>
+        <div class="feed-grid" id="mkt-feeds"></div>
+      </div>
+      <div class="panel">
+        <h2>报价</h2>
+        <div style="overflow:auto">
+          <table class="quote-table" id="mkt-table">
+            <thead>
+              <tr>
+                <th>代码</th><th>收盘</th><th>涨跌%</th><th>成交量</th><th>走势</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -281,6 +326,7 @@ function showView(name) {
     btn.classList.toggle("active", btn.dataset.view === name);
   });
   if (name === "reproduce") loadJobs().catch(() => {});
+  if (name === "market") loadMarket().catch(() => {});
 }
 
 document.querySelectorAll(".nav-link").forEach(btn => {
@@ -589,6 +635,85 @@ document.getElementById("repro-mode").onchange = (e) => {
   const isStrategy = e.target.value === "strategy";
   document.getElementById("strategy-options").style.display = isStrategy ? "block" : "none";
 };
+document.getElementById("mkt-refresh").onclick = () => loadMarket().catch(showErr);
+document.getElementById("mkt-universe").onchange = () => loadMarket().catch(showErr);
+
+function sparkSvg(values) {
+  const xs = (values || []).map(Number).filter(v => Number.isFinite(v));
+  if (xs.length < 2) return "";
+  const lo = Math.min(...xs), hi = Math.max(...xs);
+  const span = hi - lo || 1;
+  const w = 72, h = 22, p = 1;
+  const pts = xs.map((v, i) => {
+    const x = p + (i / (xs.length - 1)) * (w - 2 * p);
+    const y = h - p - ((v - lo) / span) * (h - 2 * p);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const up = xs[xs.length - 1] >= xs[0];
+  const color = up ? "#ed8796" : "#a6da95";
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline fill="none" stroke="${color}" stroke-width="1.4" points="${pts}"/></svg>`;
+}
+
+function pctClass(p) {
+  if (p == null) return "";
+  return p > 0 ? "up" : (p < 0 ? "down" : "");
+}
+
+function fmtPct(p) {
+  if (p == null || !Number.isFinite(p)) return "—";
+  return (p * 100).toFixed(2) + "%";
+}
+
+function renderTicker(quotes) {
+  const el = document.getElementById("ticker-bar");
+  const items = (quotes || []).slice(0, 12);
+  if (!items.length) {
+    el.textContent = "行情带：当前数据源无报价";
+    return;
+  }
+  el.innerHTML = items.map(q => {
+    const cls = pctClass(q.chg_pct);
+    return `<span><b>${escapeHtml(q.asset)}</b> ${q.close != null ? Number(q.close).toFixed(2) : "—"} <span class="${cls}">${fmtPct(q.chg_pct)}</span></span>`;
+  }).join("");
+}
+
+async function loadMarket() {
+  const universe = document.getElementById("mkt-universe").value || "all";
+  const [feeds, snap] = await Promise.all([
+    api("/api/feeds"),
+    api("/api/market/quotes?universe=" + encodeURIComponent(universe) + "&limit=40"),
+  ]);
+  const pulse = snap.pulse || {};
+  document.getElementById("mkt-status").textContent =
+    `源 ${snap.data_source || "—"} · 日 ${pulse.session || "—"}`;
+  document.getElementById("mkt-kpis").innerHTML = `
+    <div class="kpi"><div class="label">标的</div><div class="value">${pulse.n_assets || 0}</div></div>
+    <div class="kpi"><div class="label">上涨</div><div class="value">${pulse.n_up || 0}</div></div>
+    <div class="kpi"><div class="label">下跌</div><div class="value">${pulse.n_down || 0}</div></div>
+    <div class="kpi"><div class="label">领涨</div><div class="value">${escapeHtml((pulse.gainer && pulse.gainer.asset) || "—")}</div></div>`;
+  const feedBox = document.getElementById("mkt-feeds");
+  feedBox.innerHTML = (feeds.items || []).map(it => `
+    <div class="kpi">
+      <div class="label">${escapeHtml(it.title)} ${it.active ? "· 当前" : ""}</div>
+      <div class="value" style="font-size:1rem">${escapeHtml(it.status)}</div>
+      <div class="muted">${escapeHtml(it.detail || "")}</div>
+    </div>`).join("");
+  const body = document.querySelector("#mkt-table tbody");
+  const quotes = snap.quotes || [];
+  if (!quotes.length) {
+    body.innerHTML = `<tr><td colspan="5">无报价（检查 DATA_SOURCE / LOCAL_DATA_PATH）</td></tr>`;
+  } else {
+    body.innerHTML = quotes.map(q => `
+      <tr>
+        <td>${escapeHtml(q.asset)}</td>
+        <td>${q.close != null ? Number(q.close).toFixed(3) : "—"}</td>
+        <td class="${pctClass(q.chg_pct)}">${fmtPct(q.chg_pct)}</td>
+        <td>${q.volume != null ? Number(q.volume).toFixed(0) : "—"}</td>
+        <td>${sparkSvg(q.spark)}</td>
+      </tr>`).join("");
+  }
+  renderTicker(quotes);
+}
 
 function showErr(e) {
   console.error(e);
@@ -596,7 +721,7 @@ function showErr(e) {
 }
 
 // boot
-Promise.all([loadLibrary(), loadReviews()]).catch(showErr);
+Promise.all([loadLibrary(), loadReviews(), loadMarket()]).catch(showErr);
 </script>
 </body>
 </html>

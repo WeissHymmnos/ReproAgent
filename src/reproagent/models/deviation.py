@@ -19,14 +19,13 @@ class RootCause(StrEnum):
 
 
 class ToleranceConfig(BaseModel):
-    """核心指标容忍区间（业界标准）。"""
+    """核心指标容忍区间。"""
 
     ic_mean_abs: float = 0.03
     ic_ir_abs: float = 0.2
     long_short_return_rel: float = 0.15
     sharpe_abs: float = 0.3
     max_drawdown_abs: float = 0.05
-    # Phase 2: 反过拟合门控阈值
     min_dsr: float = -1.0  # 最低可接受 DSR
     max_pbo: float = 0.3  # 最大可接受 PBO
     min_sharpe_ci_lower: float = 0.0  # Sharpe CI 下界 > 0

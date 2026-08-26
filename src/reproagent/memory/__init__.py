@@ -1,4 +1,4 @@
-"""研究记忆子系统（XAlpha 启发）：report knowledge + discovery feedback。"""
+"""研报知识原子与复现反馈。"""
 
 from reproagent.memory.store import MemoryStore
 from reproagent.memory.writer import MemoryWriter

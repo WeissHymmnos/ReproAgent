@@ -39,9 +39,9 @@ _FIELD_ALIASES: dict[str, str] = {
     "droa": "return_on_asset",
 }
 
-# 已知股票池（一等公民定义，不是失败后静默代理）
+# 已知股票池。all / 全A 保持全市场，不改成 csi300。
 _KNOWN_UNIVERSE: dict[str, str] = {
-    "all": "csi300",
+    "all": "all",
     "csi300": "csi300",
     "hs300": "csi300",
     "沪深300": "csi300",
@@ -50,10 +50,10 @@ _KNOWN_UNIVERSE: dict[str, str] = {
     "中证500": "csi500",
     "csi1000": "csi1000",
     "中证1000": "csi1000",
-    "全a股": "csi300",
-    "全a": "csi300",
-    "a股": "csi300",
-    "全市场": "csi300",
+    "全a股": "all",
+    "全a": "all",
+    "a股": "all",
+    "全市场": "all",
     "cb": "全转债",
     "convertible": "全转债",
     "全转债": "全转债",
@@ -151,9 +151,9 @@ def normalize_universe(universe: str | None) -> tuple[str, bool]:
         return "csi500", False
     if "300" in key or "沪深300" in raw:
         return "csi300", False
-    # 明确 A 股全市场用语
+    # 明确 A 股全市场用语：保持 all，不当成 CSI300 代理
     if key in {"全市场"} or "全a" in key or key == "a股":
-        return "csi300", False
+        return "all", False
     # 期货 / 行业 / 基金 / 未知描述 → 静默代理（必须打标）
     return "csi300", True
 

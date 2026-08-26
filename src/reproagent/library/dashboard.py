@@ -17,6 +17,49 @@ def _as_float(value: Any, default: float = 0.0) -> float:
     return out
 
 
+def _fitness(sharpe: float, ann_return: float, turnover: float) -> float:
+    import math
+
+    denom = max(abs(turnover), 0.1)
+    return (sharpe * math.sqrt(max(abs(ann_return), 0.0))) / denom
+
+
+def _self_correlation(ic_series: list[float]) -> float | str:
+    if len(ic_series) < 3:
+        return "n/a"
+    xs = ic_series[:-1]
+    ys = ic_series[1:]
+    n = len(xs)
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    num = sum((a - mx) * (b - my) for a, b in zip(xs, ys, strict=True))
+    denx = sum((a - mx) ** 2 for a in xs) ** 0.5
+    deny = sum((b - my) ** 2 for b in ys) ** 0.5
+    if denx * deny == 0:
+        return "n/a"
+    return num / (denx * deny)
+
+
+def _quality_stats(src: dict[str, Any], ic_series: list[float], stats_in: dict[str, Any]) -> dict[str, Any]:
+    sharpe = _as_float(stats_in.get("sharpe", src.get("sharpe")))
+    ann = _as_float(stats_in.get("ann_return", src.get("ann_return")))
+    turnover = _as_float(stats_in.get("turnover", src.get("turnover")))
+    coverage = src.get("coverage", stats_in.get("coverage", "n/a"))
+    prod = src.get("production_correlation", stats_in.get("production_correlation", "n/a"))
+    fitness = src.get("fitness", stats_in.get("fitness"))
+    if fitness is None:
+        fitness = _fitness(sharpe, ann, turnover)
+    self_corr = src.get("self_correlation", stats_in.get("self_correlation"))
+    if self_corr is None:
+        self_corr = _self_correlation(ic_series)
+    return {
+        "fitness": fitness if not isinstance(fitness, str) else fitness,
+        "self_correlation": self_corr,
+        "coverage": coverage if coverage is not None else "n/a",
+        "production_correlation": prod if prod is not None else "n/a",
+    }
+
+
 def normalize_dashboard_factor(raw: dict[str, Any] | None) -> dict[str, Any]:
     """Fill missing series/stats so dashboard JS never calls toFixed on undefined."""
     src = raw or {}
@@ -43,6 +86,7 @@ def normalize_dashboard_factor(raw: dict[str, Any] | None) -> dict[str, Any]:
             "max_drawdown": _as_float(stats_in.get("max_drawdown")),
             "win_rate": _as_float(stats_in.get("win_rate")),
             "std": _as_float(stats_in.get("std")),
+            **_quality_stats(src, ic_series, stats_in),
         },
     }
 
@@ -72,6 +116,7 @@ def library_dashboard_payload(entry: Any) -> dict[str, Any]:
             "max_drawdown": mdd * 100.0,
             "win_rate": _as_float(raw.get("win_rate")),
             "std": _as_float(raw.get("std")),
+            **_quality_stats(raw, [_as_float(v) for v in ic_series], raw),
         },
     }
 
@@ -244,7 +289,7 @@ body {{
 </head>
 <body>
 <div class="nav">
-  <h1>&#x1F4CA; 因子库</h1>
+  <h1>因子库</h1>
   <div class="badge">总计 <span id="totalCount">{count}</span> 个因子</div>
 </div>
 <div class="toolbar">
@@ -272,11 +317,20 @@ body {{
 const FACTORS = {factors_json};
 
 function num(x, d) {{ const v = Number(x); return Number.isFinite(v) ? v : (d || 0); }}
+function fmtQual(x, digits) {{
+  if (x === "n/a" || x === null || x === undefined || x === "") return "n/a";
+  const v = Number(x);
+  return Number.isFinite(v) ? v.toFixed(digits) : "n/a";
+}}
 function statsOf(f) {{
   const s = (f && f.stats) || {{}};
   return {{
     ic: num(s.ic), icir: num(s.icir), ann_return: num(s.ann_return),
-    max_drawdown: num(s.max_drawdown), win_rate: num(s.win_rate), std: num(s.std)
+    max_drawdown: num(s.max_drawdown), win_rate: num(s.win_rate), std: num(s.std),
+    fitness: s.fitness,
+    self_correlation: s.self_correlation,
+    coverage: s.coverage,
+    production_correlation: s.production_correlation
   }};
 }}
 function esc(s) {{
@@ -295,7 +349,9 @@ function renderCard(f, i) {{
     <div class="stat-row"><span class="label">IC</span><span class="value ${{icColor}}">${{s.ic > 0 ? '+' : ''}}${{s.ic.toFixed(4)}}</span></div>
     <div class="stat-row"><span class="label">ICIR</span><span class="value blue">${{s.icir.toFixed(2)}}</span></div>
     <div class="stat-row"><span class="label">年化收益</span><span class="value ${{retColor}}">${{s.ann_return > 0 ? '+' : ''}}${{s.ann_return.toFixed(1)}}%</span></div>
+    <div class="stat-row"><span class="label">Fitness</span><span class="value blue">${{fmtQual(s.fitness, 2)}}</span></div>
     <div class="mini">回撤 ${{s.max_drawdown.toFixed(1)}}%  ·  胜率 ${{s.win_rate.toFixed(0)}}%</div>
+    <div class="mini">自相关 ${{fmtQual(s.self_correlation, 2)}}  ·  覆盖 ${{fmtQual(s.coverage, 2)}}  ·  生产相关 ${{fmtQual(s.production_correlation, 2)}}</div>
   </div>`;
 }}
 
@@ -325,7 +381,11 @@ function openModal(idx) {{
     <div class="kpi"><div class="kpi-label">年化收益</div><div class="kpi-value ${{s.ann_return > 0 ? 'green' : 'red'}}">${{s.ann_return.toFixed(1)}}%</div></div>
     <div class="kpi"><div class="kpi-label">最大回撤</div><div class="kpi-value red">${{s.max_drawdown.toFixed(1)}}%</div></div>
     <div class="kpi"><div class="kpi-label">IC 标准差</div><div class="kpi-value blue">${{s.std.toFixed(4)}}</div></div>
-    <div class="kpi"><div class="kpi-label">胜率</div><div class="kpi-value green">${{s.win_rate.toFixed(0)}}%</div></div>`;
+    <div class="kpi"><div class="kpi-label">胜率</div><div class="kpi-value green">${{s.win_rate.toFixed(0)}}%</div></div>
+    <div class="kpi"><div class="kpi-label">Fitness</div><div class="kpi-value blue">${{fmtQual(s.fitness, 2)}}</div></div>
+    <div class="kpi"><div class="kpi-label">自相关</div><div class="kpi-value blue">${{fmtQual(s.self_correlation, 2)}}</div></div>
+    <div class="kpi"><div class="kpi-label">覆盖</div><div class="kpi-value blue">${{fmtQual(s.coverage, 2)}}</div></div>
+    <div class="kpi"><div class="kpi-label">生产相关</div><div class="kpi-value blue">${{fmtQual(s.production_correlation, 2)}}</div></div>`;
   Object.values(charts).forEach(c => {{ if (c && c.destroy) c.destroy(); }});
   charts = {{}};
   const labels = f.ic_series.map((_, i) => `T${{i + 1}}`);

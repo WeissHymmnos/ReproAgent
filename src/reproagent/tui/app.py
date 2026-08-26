@@ -8,7 +8,7 @@ from textual.widgets import Footer, Header, TabbedContent, TabPane
 
 
 def tui_subtitle() -> str:
-    """Build the header subtitle from the command catalog + key bindings."""
+    """页眉副标题：页签快捷键。"""
     from reproagent.tui.commands import COMMANDS
 
     keys = {"reproduce": "r", "library": "l", "review": "v"}

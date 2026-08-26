@@ -14,7 +14,9 @@ from reproagent.parser.formula_normalize import (
 
 def test_known_universe_not_fallback() -> None:
     u, fb = normalize_universe("全A股")
-    assert u == "csi300" and fb is False
+    assert u == "all" and fb is False
+    u, fb = normalize_universe("all")
+    assert u == "all" and fb is False
     u, fb = normalize_universe("csi500")
     assert u == "csi500" and fb is False
 

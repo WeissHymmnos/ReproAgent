@@ -1,4 +1,4 @@
-"""In-process HTTP application for ReproAgent workstation UI."""
+"""本地工作台 HTTP 服务。"""
 
 from __future__ import annotations
 
@@ -208,6 +208,23 @@ class WebApp:
             if method == "GET" and route.startswith("/api/jobs/"):
                 job_id = route[len("/api/jobs/") :].strip("/")
                 return self._job_status(job_id)
+            if method == "GET" and route == "/api/feeds":
+                from reproagent.market.catalog import probe_feeds
+
+                return _json(probe_feeds(self.settings))
+            if method == "GET" and route == "/api/market/quotes":
+                from reproagent.market.tape import build_market_snapshot
+
+                universe = _first_query(query, "universe") or "all"
+                limit_parsed = _parse_limit(_first_query(query, "limit"), default=40)
+                if isinstance(limit_parsed, HttpResponse):
+                    return limit_parsed
+                cap = 40 if limit_parsed is None else limit_parsed
+                return _json(
+                    build_market_snapshot(
+                        self.settings, universe=universe, limit=cap
+                    )
+                )
             return _json({"error": "not found", "path": route}, status=404)
         except Exception as exc:  # noqa: BLE001
             payload: dict[str, Any] = {"error": str(exc)}

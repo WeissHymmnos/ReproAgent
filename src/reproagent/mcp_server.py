@@ -1,13 +1,8 @@
-"""FastMCP 服务器：暴露 reproagent 能力为 MCP 工具。
-
-供 Claude Code / Claude Desktop 通过 MCP 协议调用。
-启动方式: uv run reproagent mcp
-"""
+"""MCP 服务：把复现引擎暴露给支持 MCP 的客户端。启动：uv run reproagent mcp"""
 
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
 from typing import Any
 
 
@@ -42,179 +37,15 @@ def _score_from_metrics(
 
 
 def placebo_pvalue_from_result(result: Any) -> float | None:
-    """PlaceboResult uses ``p_value``; older callers looked for ``pvalue``."""
-    if result is None:
-        return None
-    raw = getattr(result, "p_value", None)
-    if raw is None and isinstance(result, dict):
-        raw = result.get("p_value", result.get("pvalue"))
-    try:
-        value = float(raw)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
-    if value != value or value in (float("inf"), float("-inf")):
-        return None
-    return value
+    from reproagent.reproducer.overfit_eval import placebo_pvalue_from_result as _impl
 
-
-def _forward_returns_for_factor_panel(factor_values: Any) -> Any | None:
-    """Build date/asset/forward_return from local prices when the panel is usable."""
-    import polars as pl
-
-    if factor_values is None or "date" not in factor_values.columns:
-        return None
-    if "asset" not in factor_values.columns or factor_values["asset"].n_unique() < 2:
-        return None
-    from reproagent.reproducer.data_loader import DataLoader
-    from reproagent.settings import get_settings
-
-    dates = factor_values["date"].drop_nulls().to_list()
-    parsed: list[date] = []
-    for item in dates:
-        if isinstance(item, date) and not isinstance(item, datetime):
-            parsed.append(item)
-        else:
-            text = str(item)[:10]
-            try:
-                parsed.append(date.fromisoformat(text))
-            except ValueError:
-                continue
-    if len(parsed) < 3:
-        return None
-    start, end = min(parsed), max(parsed)
-    px = DataLoader(get_settings()).load_price_data("all", start, end)
-    if px.is_empty() or "close" not in px.columns:
-        return None
-    date_col = "trade_date" if "trade_date" in px.columns else "date"
-    asset_col = "ts_code" if "ts_code" in px.columns else "asset"
-    px = px.sort([asset_col, date_col]).with_columns(
-        (pl.col("close").shift(-1).over(asset_col) / pl.col("close") - 1).alias(
-            "forward_return"
-        )
-    )
-    return px.select(
-        pl.col(date_col).alias("date"),
-        pl.col(asset_col).alias("asset"),
-        "forward_return",
-    )
+    return _impl(result)
 
 
 def run_anti_overfitting_from_equity(equity_path: str | None) -> dict:
-    """Read an equity-curve parquet and run the anti-overfitting suite."""
-    from dataclasses import asdict
+    from reproagent.reproducer.overfit_eval import evaluate_from_equity
 
-    import numpy as np
-    import polars as pl
-
-    from reproagent.reproducer.anti_overfitting import (
-        bootstrap_sharpe_ci,
-        deflated_sharpe_ratio,
-        min_backtest_length,
-        placebo_test,
-        prob_backtest_overfitting,
-        subsample_stress_test,
-        walk_forward_validation,
-    )
-
-    empty = {
-        "dsr": None,
-        "dsr_pvalue": None,
-        "pbo": None,
-        "min_btl": None,
-        "sharpe_ci": None,
-        "placebo_pvalue": None,
-        "walk_forward": None,
-        "stress_test": None,
-    }
-    if not equity_path:
-        return {**empty, "note": "No equity curve path"}
-
-    from pathlib import Path
-
-    path = Path(equity_path)
-    if not path.exists():
-        return {**empty, "note": f"Equity curve not found: {path}"}
-
-    try:
-        eq = pl.read_parquet(path)
-    except Exception as exc:  # noqa: BLE001
-        return {**empty, "note": f"Failed to read equity: {exc}"}
-
-    ret_col: str | None = None
-    for c in ("ls_return", "ls_return_raw", "long_short", "ls", "daily_return"):
-        if c in eq.columns:
-            ret_col = c
-            break
-    if ret_col is None:
-        numeric = [
-            c
-            for c in eq.columns
-            if c not in ("date", "trade_date", "group", "turnover", "asset")
-            and eq.schema[c].is_numeric()
-        ]
-        if not numeric:
-            return {**empty, "note": "No return columns in equity curve"}
-        ret_col = str(numeric[0])
-
-    series = eq[ret_col].drop_nulls().to_numpy()
-    if len(series) < 5:
-        return {**empty, "note": f"Too few observations: {len(series)}"}
-
-    rets = series.astype(float)
-    rets = rets[np.isfinite(rets)]
-    if len(rets) < 5:
-        return {**empty, "note": "Insufficient finite returns"}
-
-    sharpe = float(np.mean(rets) / (np.std(rets) + 1e-12) * np.sqrt(252))
-    dsr = deflated_sharpe_ratio(sharpe, n_trials=10, n_obs=len(rets))
-    pbo = prob_backtest_overfitting(rets, n_splits=min(5, max(2, len(rets) // 5)))
-    min_btl = min_backtest_length(sharpe, variance=float(np.var(rets)))
-    boot = bootstrap_sharpe_ci(rets, n_boot=200)
-
-    placebo_p = None
-    try:
-        fv_path = path.parent / "factor_values.parquet"
-        if fv_path.exists():
-            fv = pl.read_parquet(fv_path)
-            fwd = _forward_returns_for_factor_panel(fv)
-            if fwd is not None:
-                pr = placebo_test(fv, fwd, n_shuffles=50)
-                placebo_p = placebo_pvalue_from_result(pr)
-    except Exception:  # noqa: BLE001
-        placebo_p = None
-
-    out = {
-        "dsr": float(dsr.dsr),
-        "dsr_pvalue": float(dsr.p_value),
-        "pbo": float(pbo.pbo),
-        "min_btl": int(min_btl.min_obs),
-        "sharpe_ci": {
-            "lower": float(boot.sharpe_ci_lower),
-            "upper": float(boot.sharpe_ci_upper),
-        },
-        "placebo_pvalue": float(placebo_p) if placebo_p is not None else None,
-        "walk_forward": None,
-        "stress_test": None,
-        "n_obs": len(rets),
-        "sharpe": sharpe,
-    }
-    try:
-        fv_path = path.parent / "factor_values.parquet"
-        if fv_path.exists():
-            fv = pl.read_parquet(fv_path)
-            fwd = _forward_returns_for_factor_panel(fv)
-            if fwd is not None:
-                wf = walk_forward_validation(fv, fwd, n_splits=5)
-                out["walk_forward"] = asdict(wf)
-                merged = fv.join(fwd, on=["date", "asset"], how="inner").drop_nulls()
-                if len(merged) >= 30:
-                    st = subsample_stress_test(merged)
-                    out["stress_test"] = asdict(st)
-    except Exception as exc:  # noqa: BLE001
-        logging.getLogger(__name__).warning(
-            "walk-forward/stress extension skipped: %s", exc
-        )
-    return out
+    return evaluate_from_equity(equity_path)
 
 
 def _library_entry_for_grade(backtest_id: str) -> Any:
@@ -368,18 +199,7 @@ def search_factor_library_impl(
 
 
 def build_mcp_server() -> object:
-    """构建并返回 MCP 服务器实例（FastMCP）。
-
-    8 个工具：
-    - validate_expression: 校验因子表达式
-    - list_operators: 列出所有算子
-    - run_backtest: 运行因子回测
-    - score_factor: 多维度评分
-    - diagnose_factor: 失败模式诊断
-    - run_anti_overfitting: 反过拟合检验
-    - list_universes: 列出股票池
-    - search_factor_library: 搜索因子库
-    """
+    """构建 FastMCP 服务。"""
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError:
@@ -415,7 +235,7 @@ def build_mcp_server() -> object:
         universe: str = "csi300",
         num_groups: int = 5,
     ) -> dict:
-        """运行完整因子回测（计算因子值 + 简易评分指标 + 0-100 评分）。"""
+        """计算因子值并回测，附带 0-100 评分。"""
         from reproagent.reproducer.backtest_bundle import build_backtest_bundle
 
         out = build_backtest_bundle(
@@ -444,11 +264,7 @@ def build_mcp_server() -> object:
 
     @mcp.tool()
     def score_factor(expression: str | None = None, backtest_id: str | None = None) -> dict:
-        """多维度评分（0-100, A/B/C/D）。
-
-        优先用 expression 现算；若仅提供 backtest_id，则尝试从 equity 曲线路径推断
-        （当前实现：expression 路径为主）。
-        """
+        """0-100 评分（A/B/C/D）。有 expression 就现算；否则按 backtest_id 查库。"""
         try:
             from finaince.tools import handle_score_factor
 
@@ -481,10 +297,7 @@ def build_mcp_server() -> object:
 
     @mcp.tool()
     def run_anti_overfitting(backtest_id: str | None = None, expression: str | None = None) -> dict:
-        """4+ 项反过拟合检验。
-
-        推荐传 expression 现算；backtest_id  alone 时返回说明。
-        """
+        """DSR / PBO 等反过拟合检验。需要 expression 才能现算。"""
         if expression:
             bt = run_backtest(expression)
             result = run_anti_overfitting_from_equity(bt.get("equity_curve_path"))
@@ -521,6 +334,22 @@ def build_mcp_server() -> object:
             {"id": "cb", "name": "全转债", "benchmark": "000832.SH"},
             {"id": "全转债", "name": "全转债", "benchmark": "000832.SH"},
         ]
+
+    @mcp.tool()
+    def list_feeds() -> dict:
+        """列出 ReproAgent 数据源及其配置健康状态。"""
+        from reproagent.market.catalog import probe_feeds
+        from reproagent.settings import get_settings
+
+        return probe_feeds(get_settings())
+
+    @mcp.tool()
+    def market_quotes(universe: str = "all", limit: int = 40) -> dict:
+        """当前数据源最近交易日报价，按涨跌幅排序。"""
+        from reproagent.market.tape import build_market_snapshot
+        from reproagent.settings import get_settings
+
+        return build_market_snapshot(get_settings(), universe=universe, limit=limit)
 
     @mcp.tool()
     def search_factor_library(query: str = "", style: str | None = None) -> list[dict]:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 
 @dataclass
@@ -35,7 +35,7 @@ class DecayStatus:
 
 @dataclass
 class DecayReport:
-    """因子库衰减全景报告。"""
+    """因子库衰减报告。"""
 
     total_checked: int
     stable: int
@@ -46,11 +46,7 @@ class DecayReport:
 
 
 class DecayMonitor:
-    """周期性重新评估库内因子，检测 alpha 衰减。
-
-    使用场景：每周/每月运行一次，对所有 ready 状态的因子
-    重新计算近期 IC，与入库时的 IC 对比。
-    """
+    """把入库 IC 和近期 IC 对比，标 stable / decaying / deprecated。"""
 
     def __init__(self, ic_drop_threshold: float = 0.5) -> None:
         self.ic_drop_threshold = ic_drop_threshold
@@ -74,12 +70,7 @@ class DecayMonitor:
         return status
 
     def check_all(self, factors: dict[str, tuple[float, float]]) -> list[DecayStatus]:
-        """批量检查。
-
-        Parameters
-        ----------
-        factors: {factor_id: (original_ic, current_ic)}
-        """
+        """{factor_id: (original_ic, current_ic)}。"""
         results = []
         for fid, (orig, curr) in factors.items():
             status = self.check_factor(fid, orig, curr)
@@ -87,7 +78,7 @@ class DecayMonitor:
         return results
 
     def generate_report(self) -> DecayReport:
-        """生成衰减全景报告。"""
+        """汇总当前已检查因子。"""
         statuses = list(self._statuses.values())
         return DecayReport(
             total_checked=len(statuses),
@@ -113,3 +104,100 @@ class DecayMonitor:
             status.status = "deprecated"
             return True
         return False
+
+
+def run_library_decay_check(
+    pairs: dict[str, tuple[float, float]],
+    *,
+    eval_date: date | None = None,
+) -> DecayReport:
+    """{factor_id: (original_ic, current_ic)} → DecayReport。"""
+    monitor = DecayMonitor()
+    for fid, (orig, curr) in pairs.items():
+        monitor.check_factor(fid, orig, curr, eval_date=eval_date)
+    return monitor.generate_report()
+
+
+def _finite_or_none(value: Any) -> float | None:
+    """0.0 is a real IC; only None / NaN / non-numeric are missing."""
+    if value is None or value == "":
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    if v != v or v in (float("inf"), float("-inf")):
+        return None
+    return v
+
+
+def original_ic_from_metrics(metrics: dict[str, Any]) -> float | None:
+    for key in ("ic", "ic_mean"):
+        parsed = _finite_or_none(metrics.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def current_ic_from_artifacts(
+    data_dir: Any,
+    entry: Any,
+    *,
+    tail: int = 20,
+) -> float | None:
+    """Mean of the last ``tail`` rows in ``ic.parquet`` (0.0 is valid)."""
+    if data_dir is None:
+        return None
+    from pathlib import Path
+
+    import polars as pl
+
+    from reproagent.reproducer.metrics import find_backtest_artifact_dir
+
+    folder = find_backtest_artifact_dir(Path(data_dir), entry)
+    if folder is None:
+        return None
+    icp = folder / "ic.parquet"
+    if not icp.is_file():
+        return None
+    try:
+        df = pl.read_parquet(icp)
+    except Exception:  # noqa: BLE001
+        return None
+    if "ic" not in df.columns:
+        return None
+    series = df["ic"].drop_nulls()
+    if series.len() == 0:
+        return None
+    n = max(1, min(int(tail), series.len()))
+    mean = series.tail(n).mean()
+    return _finite_or_none(mean)
+
+
+def pairs_from_library_entries(
+    entries: list[Any],
+    data_dir: Any | None = None,
+    *,
+    tail: int = 20,
+) -> dict[str, tuple[float, float]]:
+    """original_ic from stored metrics; current_ic from ic.parquet tail.
+
+    Never substitutes original when current is missing or 0.0.
+    """
+    pairs: dict[str, tuple[float, float]] = {}
+    for entry in entries:
+        metrics = dict(getattr(entry, "metrics", None) or {})
+        orig = original_ic_from_metrics(metrics)
+        if orig is None:
+            continue
+        current = current_ic_from_artifacts(data_dir, entry, tail=tail)
+        if current is None:
+            current = _finite_or_none(metrics.get("ic_recent"))
+        if current is None:
+            current = _finite_or_none(metrics.get("current_ic"))
+        if current is None:
+            continue
+        fid = str(getattr(entry, "id", "") or "")
+        if fid:
+            pairs[fid] = (orig, current)
+    return pairs

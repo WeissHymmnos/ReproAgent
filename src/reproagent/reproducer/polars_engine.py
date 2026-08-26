@@ -14,7 +14,7 @@ import polars as pl
 from reproagent.models.factor_def import FactorDefinition
 from reproagent.models.replication import ReplicationConfig
 
-# --- Operator Definitions (similar to aiminer) ---
+# --- 算子 ---
 
 
 def Rank(x: Any, n: Any = None) -> Any:
@@ -165,7 +165,7 @@ def Const(x: Any) -> Any:
     return pl.lit(x)
 
 
-# ── 新增算子 (Phase 4.1: 对齐 aiminer ~55+ 算子) ──
+# --- 其余算子 ---
 
 
 def Exp(x: Any) -> Any:
@@ -846,7 +846,7 @@ class PolarsEngine:
         if isinstance(node, ast.Name):
             if node.id in _CONTEXT:
                 return _CONTEXT[node.id]
-            # 一等公民字段别名 → 真实面板列（缺失则抛错，不用 close 顶替）
+            # 字段别名 → 面板列；没有该列就报错，不用 close 顶替
             _field_alias = {
                 "total_market_cap": "market_cap",
                 "mkt_cap": "market_cap",

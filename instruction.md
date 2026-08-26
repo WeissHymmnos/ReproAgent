@@ -2,8 +2,7 @@
 
 > 更新: 2026-08-05
 >
-> 完整的技术参考文档，覆盖架构、数据模型、算法、接口、配置、测试的函数级细节。
-> 读代码之前先过一遍这篇，能少走很多弯路；跟着目录按需查也行。
+> 架构、模型、管线、接口、配置、测试。按目录查即可。
 
 ---
 
@@ -30,31 +29,20 @@
 
 ## 1. 项目定位与目标
 
-### 1.1 核心使命
+### 1.1 做什么
 
-ReproAgent 是一个**量化研报因子自动复现系统**。
-输入一篇中国 A 股卖方研报 PDF，输出：
+输入卖方研报 PDF（或 Markdown），输出：
 
-1. **ParsedFactorSpec[]** — 研报中所有因子的结构化定义（公式、参数、输入字段）
-2. **BacktestResult** — 每个因子的回测结果（IC、ICIR、分组收益、夏普、最大回撤等）
-3. **DeviationReport** — 复现指标与研报声称指标的偏差分析
-4. **FactorLibraryEntry** — 通过偏差门控的因子沉淀入库
+1. **ParsedFactorSpec[]** — 因子定义（公式、参数、字段）
+2. **BacktestResult** — IC、ICIR、分组收益、夏普、回撤
+3. **DeviationReport** — 和研报声称值的偏差
+4. **FactorLibraryEntry** — 过门的因子入库
 
-### 1.2 设计原则
+### 1.2 约束
 
-- **确定性优先**: 相同输入产生相同输出。Polars 引擎有 CI 确定性自检（10 个经典因子逐点比对）
-- **离线可跑**: 无 LLM API、无网络时全链路可跑（Mock 模式 + Local 数据源）
-- **防护纵深**: 数据守卫 → 未来函数检测 → 反过拟合套件 → 偏差门控 → 人工复核队列
-- **渐进式复杂度**: dev 模式宽松容忍 → prod 模式严格阻断
-
-### 1.3 与前沿项目的差异
-
-| 维度 | ReproAgent | QuantaAlpha | QuantGPT | FactorMiner | zer0factor |
-|------|-----------|-------------|----------|-------------|------------|
-| 核心场景 | **研报复现** | 因子挖掘(进化) | 因子挖掘(Agent) | 因子挖掘(Ralph Loop) | 因子研究台 |
-| 输入 | PDF 研报 | 研究方向文本 | 自然语言 | 操作符库 | 研报/想法 |
-| 输出 | 验证因子+报告 | 进化因子库 | BRAIN提交因子 | 低冗余因子库 | 标准化因子 |
-| 特殊性 | 偏差自愈+基准语料 | 轨迹进化 | 双模型交叉验证 | Skills+经验记忆 | FactorSpec+FactorFrame |
+- 相同输入相同输出；引擎有 CI 逐点比对
+- 无 LLM、无网络也能跑（mock + local parquet）
+- prod 禁止 mock 和公式静默降级
 
 
 ---
@@ -66,9 +54,9 @@ ReproAgent 是一个**量化研报因子自动复现系统**。
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    CLI / TUI / MCP                       │
-│   cli.py (Typer, 8 commands)                            │
+│   cli.py (Typer)                                        │
 │   tui/app.py (Textual)                                  │
-│   mcp_server.py (FastMCP, 8 tools)                      │
+│   mcp_server.py (FastMCP)                               │
 ├─────────────────────────────────────────────────────────┤
 │                   Pipeline (管道编排)                    │
 │   pipeline.py — reproduce_report() 端到端编排            │
@@ -132,12 +120,12 @@ PDF 文件
 src/reproagent/
 ├── __init__.py              # __version__
 ├── __main__.py              # python -m reproagent
-├── cli.py                   # Typer CLI (8 命令, ~350 行)
+├── cli.py                   # Typer CLI
 ├── pipeline.py              # 端到端编排 (~250 行)
 ├── settings.py              # pydantic-settings (~100 行)
 ├── exceptions.py            # 异常层级 (~50 行)
 ├── logging_setup.py         # loguru 配置
-├── mcp_server.py            # FastMCP 8 工具 (~170 行)
+├── mcp_server.py            # FastMCP 工具
 ├── api_models.py            # REST API 模型 (~40 行)
 │
 ├── models/                  # Pydantic v2 领域模型
@@ -213,7 +201,7 @@ src/reproagent/
 │   ├── screens/             # reproduction, library_browser, review
 │   └── widgets/             # factor_tree, deviation_gauge, log_panel
 │
-├── agents/                  # Multi-Agent 框架 (骨架)
+├── agents/                  # 未接入管线的角色占位
 │   └── __init__.py          # 5 角色: Hypothesis, Factor, Backtest, Review, Curator
 │
 └── utils/
@@ -327,7 +315,7 @@ class BacktestResult(BaseModel):
     factor_values_path: Path
     equity_curve_path: Path
     computed_at: datetime
-    # 反过拟合 (Phase 2)
+    # 反过拟合
     dsr: float | None = None
     dsr_pvalue: float | None = None
     pbo: float | None = None
@@ -352,7 +340,7 @@ class ToleranceConfig(BaseModel):
     long_short_return_rel: float = 0.15
     sharpe_abs: float = 0.3
     max_drawdown_abs: float = 0.05
-    # 反过拟合门控 (Phase 2)
+    # 反过拟合门控
     min_dsr: float = -1.0
     max_pbo: float = 0.3
     min_sharpe_ci_lower: float = 0.0
@@ -983,18 +971,22 @@ class FactorLibraryManager:
 
 ### 13.1 CLI (cli.py)
 
-Typer 应用，8 个命令全部通过 `@app.command()` 注册。
+Typer 应用，`@app.command()` 注册。
 
-| 命令 | 函数 | 关键参数 |
-|------|------|----------|
-| `ingest` | `ingest(pdf_path)` | 上传→校验→入库；invalid 自动入复核队列 |
-| `reproduce` | `reproduce(pdf_path)` | 端到端管线；prod 强制 LLM key |
-| `library` | `library(style, html)` | 列表+筛选；`--html` 生成仪表盘 |
-| `review` | `review(list, approve, reject)` | 复核队列管理 |
-| `tui` | `tui()` | 启动 Textual 界面 |
-| `benchmark` | `benchmark(list, run, run_all, report)` | 基准语料管理 |
-| `mcp` | `mcp()` | 启动 MCP 服务器 |
-| `--version` | `_version_callback` | 打印版本号 |
+| 命令 | 作用 |
+|------|------|
+| `ingest` | 上传→校验→入库；invalid 进复核队列 |
+| `reproduce` | 端到端；prod 强制 LLM key |
+| `text` | Markdown 直进 |
+| `library` | 列表+筛选；`--html` 仪表盘 |
+| `decay` | 库内 IC 衰减 |
+| `market` | 数据源健康 + 最近交易日行情 |
+| `runs` | reproduce/reflection 运行记录 |
+| `review` | 复核队列 |
+| `tui` | 终端界面 |
+| `serve` | 浏览器工作台 |
+| `benchmark` | 基准语料 |
+| `mcp` | MCP 服务 |
 
 所有命令共享 `_build_repository()` 和 `_build_library_manager()` 工厂函数。
 
@@ -1030,18 +1022,20 @@ ReproAgentApp (app.py)
 def build_mcp_server() -> FastMCP
 ```
 
-8 个 MCP 工具供 Claude Code / Claude Desktop 调用：
+MCP 工具：
 
-| 工具 | 参数 | 功能 |
-|------|------|------|
-| `validate_expression` | `expression: str` | 校验因子表达式白名单合规性 |
-| `list_operators` | — | 列出所有 55+ 算子名和类型 |
-| `run_backtest` | `expression, start_date, end_date, universe, num_groups` | 表达式→回测 |
-| `score_factor` | `expression?, backtest_id?` | 多维评分 (骨架) |
-| `diagnose_factor` | `expression: str` | 校验+未来函数检测 |
-| `run_anti_overfitting` | `backtest_id?` | 4 项反过拟合检验 (骨架) |
-| `list_universes` | — | csi300/csi500/csi1000/all |
-| `search_factor_library` | `query?, style?` | 搜索因子库 (基础) |
+| 工具 | 作用 |
+|------|------|
+| `validate_expression` | 表达式白名单校验 |
+| `list_operators` | 算子名和类型 |
+| `run_backtest` | 表达式→回测 |
+| `score_factor` | 0–100 评分 |
+| `diagnose_factor` | 校验 + 未来函数检测 |
+| `run_anti_overfitting` | DSR / PBO 等 |
+| `list_universes` | csi300/csi500/csi1000/all/转债 |
+| `search_factor_library` | 搜因子库 |
+| `list_feeds` | 数据源健康 |
+| `market_quotes` | 最近交易日报价 |
 
 启动: `uv run reproagent mcp`
 
@@ -1069,9 +1063,9 @@ Claude Desktop 配置:
 
 ## 14. Multi-Agent 框架
 
-### 14.1 设计蓝图 (agents/__init__.py)
+### 14.1 `agents/__init__.py`
 
-参考 QuantaAlpha-claw 蜂群架构和 FactorMiner Ralph Loop。5 个 Agent 角色：
+未编排进管线。五个角色：
 
 ```
 HypothesisAgent.generate(report_text) → list[HypothesisResult]
@@ -1085,7 +1079,7 @@ ReviewAgent.review(hypothesis, synthesis, evaluation) → ReviewVerdict
 CuratorAgent.decide(evaluation, review, correlations) → CuratorDecision
 ```
 
-当前为接口契约和骨架实现，完整编排留作后续迭代。
+`generate()` 返回空列表；其余方法返回占位对象。
 
 ### 14.2 数据模型
 

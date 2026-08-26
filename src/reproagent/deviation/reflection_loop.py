@@ -68,6 +68,32 @@ class ReflectionLoopController:
 
         while state.current_iteration < state.max_iterations and state.status == "in_progress":
             result = self.reproducer.reproduce(current_config)
+            try:
+                from reproagent.persistence.run_log import write_run_record
+
+                settings = getattr(self.reproducer, "settings", None)
+                data_dir = getattr(settings, "data_dir", None)
+                spec0 = (
+                    current_config.factor_specs[0] if current_config.factor_specs else None
+                )
+                bp = current_config.backtest_params
+                if data_dir is not None:
+                    write_run_record(
+                        data_dir,
+                        {
+                            "report_id": state.report_id,
+                            "formula": getattr(spec0, "formula", None),
+                            "window": {
+                                "start": str(bp.start_date),
+                                "end": str(bp.end_date),
+                            },
+                            "kind": "reflection",
+                            "iteration": state.current_iteration,
+                            "backtest_id": getattr(result, "id", None),
+                        },
+                    )
+            except Exception:  # noqa: BLE001
+                pass
 
             deviation = self.analyzer.analyze(result, reported, self.tolerances)
             deviation.root_cause = self.analyzer.classify_root_cause(deviation, current_config)

@@ -157,6 +157,9 @@ def test_index_html_has_reproagent_sections() -> None:
     assert "因子库" in html
     assert "人工复核" in html
     assert "研报复现" in html
+    assert "行情台" in html
+    assert "/api/feeds" in html
+    assert "/api/market/quotes" in html
     assert "/api/library" in html
     assert "/api/summary" in html
     assert "it.metrics" in html

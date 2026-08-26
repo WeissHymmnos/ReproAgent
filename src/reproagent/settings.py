@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     llm_seed: int = 42
 
     # Parser
-    parser_backend: Literal["finpdfpro", "marker", "llamaparse", "mineru"] = "finpdfpro"
+    parser_backend: Literal["finpdfpro"] = "finpdfpro"
     parser_version: str = "1.0.0"
     finpdfpro_profile: Literal["auto", "lite", "balanced", "quality"] = "balanced"
     finpdfpro_mode: Literal["fast", "balanced", "max-quality"] | None = None
@@ -71,13 +71,23 @@ class Settings(BaseSettings):
     max_reflection_iterations: int = 3
 
     # 引擎默认
-    default_engine: Literal["polars", "rqalpha"] = "polars"
+    default_engine: Literal["polars"] = "polars"
 
     # 运行环境：prod 下默认禁止 mock LLM 与公式静默降级
     app_env: Literal["dev", "prod"] = "dev"
     # None = 跟随 app_env（dev 允许 / prod 禁止）；显式 True/False 覆盖
     allow_mock_llm: bool | None = None
     allow_formula_fallback: bool | None = None
+
+    @field_validator("allow_mock_llm", "allow_formula_fallback", mode="before")
+    @classmethod
+    def _blank_optional_bool(cls, value: object) -> object:
+        """Empty env (ALLOW_MOCK_LLM=) means unset, not a parse error."""
+        if value is None:
+            return None
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        return value
 
     # TUI
     tui_theme: str = "dark"

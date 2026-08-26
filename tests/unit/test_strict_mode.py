@@ -90,6 +90,85 @@ def test_formula_strict_raises_on_syntax_error() -> None:
         engine.compute(fd, "all", date(2020, 1, 1), date(2020, 1, 10), data=data)
 
 
+def test_blank_allow_mock_llm_env_means_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ALLOW_MOCK_LLM= must not crash Settings; prod still forbids mock."""
+    from reproagent.settings import get_settings
+
+    monkeypatch.setenv("ALLOW_MOCK_LLM", "")
+    monkeypatch.setenv("ALLOW_FORMULA_FALLBACK", "")
+    monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.setenv("LLM_API_KEY", "")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    get_settings.cache_clear()
+    try:
+        settings = Settings(_env_file=None)
+        assert settings.allow_mock_llm is None
+        assert settings.allow_formula_fallback is None
+        assert settings.is_prod is True
+        assert settings.mock_llm_allowed is False
+        assert settings.formula_fallback_allowed is False
+        assert settings.llm_api_key.get_secret_value().strip() == ""
+    finally:
+        get_settings.cache_clear()
+
+
+def test_cli_prod_reproduce_without_key_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from typer.testing import CliRunner
+
+    from reproagent.cli import app
+    from reproagent.settings import get_settings
+
+    monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.setenv("LLM_API_KEY", "")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.delenv("ALLOW_MOCK_LLM", raising=False)
+    get_settings.cache_clear()
+    pdf = (
+        Path(__file__).resolve().parents[2]
+        / "tests"
+        / "fixtures"
+        / "sample_reports"
+        / "minimal.pdf"
+    )
+    assert pdf.is_file()
+    try:
+        result = CliRunner().invoke(app, ["reproduce", str(pdf)])
+        assert result.exit_code == 1
+        out = f"{result.output}{result.stdout}{result.stderr}"
+        assert "LLM_API_KEY" in out
+        assert "reproduce failed" in out
+    finally:
+        get_settings.cache_clear()
+
+
+def test_cli_prod_text_without_key_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from typer.testing import CliRunner
+
+    from reproagent.cli import app
+    from reproagent.settings import get_settings
+
+    monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.setenv("LLM_API_KEY", "")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    get_settings.cache_clear()
+    md = tmp_path / "a.md"
+    md.write_text("动量因子：close / Ref(close, 5) - 1\n", encoding="utf-8")
+    try:
+        result = CliRunner().invoke(app, ["text", "-f", str(md)])
+        assert result.exit_code == 1
+        assert "LLM_API_KEY" in result.output
+        assert "text failed" in result.output
+    finally:
+        get_settings.cache_clear()
+
+
 def test_formula_fallback_returns_close() -> None:
     config = ReplicationConfig(
         id="c1",

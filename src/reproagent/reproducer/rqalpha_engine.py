@@ -11,10 +11,7 @@ from reproagent.models.replication import ReplicationConfig
 
 
 class RiceQuantEval:
-    """用 rqalpha 计算因子值。实现 FactorEngine Protocol。
-
-    注意：rqalpha 为 optional extra，实现时 lazy import。
-    """
+    """rqalpha 引擎占位。compute() 直接报错，避免静默改用 Polars。"""
 
     def __init__(self, config: ReplicationConfig) -> None:
         self.config = config
@@ -27,18 +24,10 @@ class RiceQuantEval:
         end: date,
         data: pl.DataFrame | None = None,
     ) -> pl.DataFrame:
-        """返回 [date, asset, factor_value]。"""
-        try:
-            import rqalpha  # noqa: F401
-        except ImportError:
-            from reproagent.exceptions import ConfigurationError
+        """未实现。"""
+        del factor_def, universe, start, end, data
+        from reproagent.exceptions import ConfigurationError
 
-            raise ConfigurationError(
-                "rqalpha is not installed. Please install with `pip install rqalpha`."
-            )
-
-        # Fallback to PolarsEngine for now
-        from reproagent.reproducer.polars_engine import PolarsEngine
-
-        engine = PolarsEngine(self.config)
-        return engine.compute(factor_def, universe, start, end, data)
+        raise ConfigurationError(
+            "engine=rqalpha is not implemented; use engine=polars"
+        )

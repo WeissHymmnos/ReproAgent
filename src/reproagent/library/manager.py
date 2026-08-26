@@ -26,15 +26,13 @@ class FactorLibraryManager:
         self.wiki_writer = WikiWriter(paths)
 
     def register(
-        self, entry: FactorLibraryEntry, check_redundancy: bool = True
+        self,
+        entry: FactorLibraryEntry,
+        check_redundancy: bool = True,
+        factor_values: pl.DataFrame | None = None,
+        backtest: object | None = None,
     ) -> FactorLibraryEntry:
-        """去重 → 分类 → 入库 → 更新 INDEX / wiki。
-
-        Parameters
-        ----------
-        entry: 待入库的因子记录
-        check_redundancy: 是否检查与库内因子的相关性冗余
-        """
+        """去重 → 质量门（冗余/反过拟合）→ 分类 → 入库 → INDEX / wiki。"""
         entry.dedup_hash = compute_dedup_hash(entry.factor)
         existing = self.dedup_check(entry)
         if existing is not None:
@@ -42,11 +40,15 @@ class FactorLibraryManager:
             entry.id = existing.id
             if not (entry.metrics or {}) and (existing.metrics or {}):
                 entry.metrics = existing.metrics
-        # 冗余检查（仅对新因子）
-        if check_redundancy and existing is None:
-            # 简化：仅基于元数据层面的冗余检查（formula+fields）
-            # 完整的截面相关性检查由 check_redundancy() 方法负责
-            pass
+        if check_redundancy and existing is None and (
+            factor_values is not None or backtest is not None
+        ):
+            from reproagent.library.admission import annotate_entry, evaluate_admission
+
+            decision = evaluate_admission(
+                self, factor_values=factor_values, backtest=backtest
+            )
+            entry = annotate_entry(entry, decision)
 
         classified_style = self.classifier.classify(entry.factor)
         entry.factor = entry.factor.model_copy(update={"style": classified_style})

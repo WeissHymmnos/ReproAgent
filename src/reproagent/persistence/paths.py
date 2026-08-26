@@ -66,6 +66,10 @@ class AppPaths:
     def memory_knowledge_dir(self) -> Path:
         return self.memory_dir / "knowledge"
 
+    @property
+    def runs_dir(self) -> Path:
+        return self.data_dir / "runs"
+
     def report_dir(self, report_id: str) -> Path:
         return self.reports_dir / report_id
 
@@ -92,6 +96,7 @@ class AppPaths:
                 self.memory_feedback_good_dir,
                 self.memory_feedback_bad_dir,
                 self.memory_knowledge_dir,
+                self.runs_dir,
             ):
                 d.mkdir(parents=True, exist_ok=True)
         except PermissionError as exc:

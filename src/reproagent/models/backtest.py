@@ -27,7 +27,6 @@ class BacktestResult(BaseModel):
     factor_values_path: Path  # parquet: date, asset, factor_value
     equity_curve_path: Path  # parquet: date, group_1..N, long_short
     computed_at: datetime
-    # Phase 2: 反过拟合检验字段
     dsr: float | None = None  # Deflated Sharpe Ratio
     dsr_pvalue: float | None = None
     pbo: float | None = None  # Probability of Backtest Overfitting

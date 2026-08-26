@@ -1,4 +1,4 @@
-"""Phase 0：研究记忆 schema 与 MemoryStore 往返。"""
+"""研究记忆 schema 与 MemoryStore 往返。"""
 
 from __future__ import annotations
 

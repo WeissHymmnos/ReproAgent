@@ -1,4 +1,4 @@
-"""Pure JSON payload builders for the browser workstation (testable without HTTP)."""
+"""工作台 JSON（不经 HTTP，方便单测）。"""
 
 from __future__ import annotations
 

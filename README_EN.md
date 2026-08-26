@@ -52,6 +52,9 @@ information routes to review instead.
     reproagent serve                  # browser workbench on :8765
     reproagent tui                    # terminal UI
     reproagent mcp                    # MCP server for MCP-capable clients
+    reproagent decay                  # library IC decay check
+    reproagent runs --list            # list reproduce/reflection run records
+    reproagent market                 # data-source health + last-session quotes
 
 `reproduce`/`text` emit one JSON document (`status`, `summary`, `factors`,
 `data_context`). Watch for `soft_passed`: metrics did not match but the result

@@ -35,11 +35,10 @@ dev = [
     "types-PyYAML>=6.0",
     "pandas-stubs>=2.0",
 ]
-rqalpha = ["rqalpha>=6.1"]
 pdf-vision = ["pdf2image>=1.17"]
 instructor = ["instructor>=1.0"]
 ricequant = ["rqdatac"]
-qlib = []
+qlib = ["pyqlib"]
 tushare = ["tushare"]
 paddle = ["paddleocr"]
 vlm = ["transformers>=4.45", "torch", "torchvision", "accelerate"]

@@ -46,6 +46,53 @@ def _single_factor_config(config: Any, spec: Any) -> Any:
     return config.model_copy(update={"factor_specs": [spec]}, deep=True)
 
 
+def _record_reproduce_attempt(settings: Any, record: dict[str, Any]) -> None:
+    try:
+        from reproagent.persistence.run_log import write_run_record
+        from reproagent.settings import get_settings as _gs
+
+        data_dir = getattr(settings or _gs(), "data_dir", None)
+        if data_dir is None:
+            return
+        write_run_record(data_dir, record)
+    except Exception:  # noqa: BLE001
+        return
+
+
+def _admit_library(
+    library_manager: Any,
+    entry: Any,
+    result: Any,
+    *,
+    repository: Any,
+    report: Any,
+    logger: Any,
+) -> tuple[Any, Any]:
+    from reproagent.library.admission import gate_register
+
+    factor_values = None
+    path = getattr(result, "factor_values_path", None)
+    if path is not None:
+        try:
+            import polars as pl
+
+            factor_values = pl.read_parquet(path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("admission factor_values load failed: %s", exc)
+    saved, decision = gate_register(
+        library_manager,
+        entry,
+        factor_values=factor_values,
+        backtest=result,
+    )
+    if not decision.accepted and repository is not None:
+        repository.enqueue_review(
+            report.id,
+            "library admission refused: " + ",".join(decision.reasons),
+        )
+    return saved, decision
+
+
 def _process_one_factor(
     *,
     spec: Any,
@@ -216,6 +263,22 @@ def _process_one_factor(
 
     deviation = analyzer.analyze(result, reported, tolerances)
     deviation.root_cause = analyzer.classify_root_cause(deviation, factor_config)
+    _record_reproduce_attempt(
+        pipeline_settings,
+        {
+            "report_id": report.id,
+            "factor_name": factor_name,
+            "formula": getattr(factor_config.factor_specs[0], "formula", None)
+            if factor_config.factor_specs
+            else None,
+            "window": {
+                "start": str(factor_config.backtest_params.start_date),
+                "end": str(factor_config.backtest_params.end_date),
+            },
+            "kind": "reproduce",
+            "backtest_id": getattr(result, "id", None),
+        },
+    )
 
     if deviation.passed and is_healthy_reproduction(result):
         # 以回测结果健康度为准；二次 compute 仅用于入库定义，失败不撤销已健康的回测
@@ -240,7 +303,32 @@ def _process_one_factor(
             created_at=datetime.now(UTC),
             metrics=metrics_from_backtest(result),
         )
-        saved = library_manager.register(entry)
+        saved, decision = _admit_library(
+            library_manager, entry, result, repository=repository, report=report, logger=logger
+        )
+        _record_reproduce_attempt(
+            pipeline_settings,
+            {
+                "report_id": report.id,
+                "factor_name": factor_name,
+                "formula": getattr(factor_config.factor_specs[0], "formula", None)
+                if factor_config.factor_specs
+                else None,
+                "window": {
+                    "start": str(factor_config.backtest_params.start_date),
+                    "end": str(factor_config.backtest_params.end_date),
+                },
+                "kind": "reproduce",
+                "status": "passed" if decision.accepted else "review_enqueued",
+            },
+        )
+        if not decision.accepted:
+            return {
+                "factor_name": factor_name,
+                "status": "review_enqueued",
+                "factor_id": saved.id,
+                "admission": decision.reasons,
+            }
         _notify_catalog_library(saved, result)
         if experience_memory is not None:
             try:
@@ -335,7 +423,22 @@ def _process_one_factor(
                     getattr(best_step, "backtest_result", None) or result
                 ),
             )
-            saved = library_manager.register(entry)
+            saved, decision = _admit_library(
+                library_manager,
+                entry,
+                getattr(best_step, "backtest_result", None) or result,
+                repository=repository,
+                report=report,
+                logger=logger,
+            )
+            if not decision.accepted:
+                return {
+                    "factor_name": factor_name,
+                    "status": "review_enqueued",
+                    "factor_id": saved.id,
+                    "admission": decision.reasons,
+                    "reflection_status": state.status,
+                }
             _notify_catalog_library(saved, getattr(best_step, "backtest_result", None) or result)
             cache_manager.save(
                 cache_key,
@@ -376,6 +479,7 @@ def _process_one_factor(
         library_manager=library_manager,
         experience_memory=experience_memory,
         logger=logger,
+        repository=repository,
         allow_soft_pass=_allow_soft,
     )
     if soft is not None:
@@ -418,6 +522,7 @@ def _try_soft_pass_after_reflection(
     library_manager: Any,
     experience_memory: Any,
     logger: Any,
+    repository: Any = None,
     allow_soft_pass: bool = True,
 ) -> dict[str, Any] | None:
     """当数值偏差无法对齐但复现结果健康时，登记为 passed（soft）。
@@ -473,7 +578,17 @@ def _try_soft_pass_after_reflection(
             created_at=datetime.now(UTC),
             metrics=metrics_from_backtest(cand),
         )
-        saved = library_manager.register(entry)
+        saved, decision = _admit_library(
+            library_manager, entry, cand, repository=repository, report=report, logger=logger
+        )
+        if not decision.accepted:
+            return {
+                "factor_name": use_spec.factor_name,
+                "status": "review_enqueued",
+                "factor_id": saved.id,
+                "admission": decision.reasons,
+                "soft_pass": False,
+            }
         _notify_catalog_library(saved, cand)
         if experience_memory is not None:
             try:

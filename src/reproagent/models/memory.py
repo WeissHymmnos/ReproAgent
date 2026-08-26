@@ -1,7 +1,4 @@
-"""研究记忆领域模型（XAlpha 启发：report knowledge + discovery feedback）。
-
-Phase 0：仅 schema；pipeline 不强制读写。
-"""
+"""研报知识原子与反馈记录。"""
 
 from __future__ import annotations
 
@@ -120,7 +117,7 @@ class MemoryWriteEvent(BaseModel):
 
 
 class FeedbackQuery(BaseModel):
-    """反馈检索条件（Phase 2+）。"""
+    """反馈检索条件。"""
 
     kind: FeedbackKind | None = None
     mechanism_family: MechanismFamily | None = None
